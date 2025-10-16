@@ -11,7 +11,7 @@ Prerequisites:
 
 Environment Variables:
     ATLAS_PUBLIC_KEY: MongoDB Atlas API Public Key
-    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key  
+    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key
     ATLAS_ORG_ID: Atlas Organization ID
     ATLAS_API_BASE_URL: (Optional) Atlas API Base URL
 
@@ -35,7 +35,9 @@ from requests.auth import HTTPDigestAuth
 load_dotenv()
 
 # --- Configuration Constants ---
-ATLAS_API_BASE_URL = os.getenv("ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2")
+ATLAS_API_BASE_URL = os.getenv(
+    "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
+)
 PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
 PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
 ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
@@ -44,42 +46,53 @@ ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("logs/delete_all_clusters.log"), logging.StreamHandler()],
+    handlers=[
+        logging.FileHandler("logs/delete_all_clusters.log"),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger("delete_all_clusters")
+
 
 # Validate required credentials
 def validate_atlas_credentials():
     """Validate that all required Atlas environment variables are set."""
     missing_vars = []
-    
+
     if not PUBLIC_KEY:
         missing_vars.append("ATLAS_PUBLIC_KEY")
     if not PRIVATE_KEY:
         missing_vars.append("ATLAS_PRIVATE_KEY")
     if not ORGANIZATION_ID:
         missing_vars.append("ATLAS_ORG_ID")
-    
+
     if missing_vars:
-        logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+        logger.error(
+            f"Missing required environment variables: {', '.join(missing_vars)}"
+        )
         logger.error("Please ensure all required variables are set in your .env file")
-        raise ValueError(f"Missing required Atlas API credentials: {', '.join(missing_vars)}")
-    
+        raise ValueError(
+            f"Missing required Atlas API credentials: {', '.join(missing_vars)}"
+        )
+
     logger.info("Atlas API credentials validated successfully")
+
 
 # Validate credentials after logger is configured
 validate_atlas_credentials()
 
 
-def make_atlas_api_request(method: str, url: str, **kwargs) -> Optional[requests.Response]:
+def make_atlas_api_request(
+    method: str, url: str, **kwargs
+) -> Optional[requests.Response]:
     """
     Make an Atlas API request with proper error handling.
-    
+
     Args:
         method: HTTP method (GET, POST, DELETE, etc.)
         url: Full URL for the request
         **kwargs: Additional arguments to pass to requests
-        
+
     Returns:
         Response object if successful, None if failed
     """
@@ -98,7 +111,7 @@ def delete_all_clusters_in_org(org_id: str) -> bool:
 
     Args:
         org_id: The ID of the Atlas organization
-        
+
     Returns:
         True if operation completed successfully, False otherwise
     """
@@ -107,40 +120,42 @@ def delete_all_clusters_in_org(org_id: str) -> bool:
         return False
 
     logger.info(f"Starting cluster deletion for organization: {org_id}")
-    
+
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/vnd.atlas.2025-02-19+json"
+        "Accept": "application/vnd.atlas.2025-02-19+json",
     }
     auth = HTTPDigestAuth(PUBLIC_KEY, PRIVATE_KEY)
-    
+
     # Get all projects in the organization
     projects_url = f"{ATLAS_API_BASE_URL}/orgs/{org_id}/groups"
     response = make_atlas_api_request("GET", projects_url, headers=headers, auth=auth)
-    
+
     if not response:
         logger.error("Failed to fetch projects from organization")
         return False
 
     projects = response.json().get("results", [])
     logger.info(f"Found {len(projects)} projects in organization")
-    
+
     total_clusters_deleted = 0
     total_failures = 0
 
     for project in projects:
         project_id = project.get("id")
         project_name = project.get("name", "Unknown")
-        
+
         if not project_id:
             logger.warning(f"Skipping project with missing ID: {project_name}")
             continue
-            
+
         logger.info(f"Processing project: {project_name} (ID: {project_id})")
 
         # Get all clusters in the project
         clusters_url = f"{ATLAS_API_BASE_URL}/groups/{project_id}/clusters"
-        clusters_response = make_atlas_api_request("GET", clusters_url, headers=headers, auth=auth)
+        clusters_response = make_atlas_api_request(
+            "GET", clusters_url, headers=headers, auth=auth
+        )
 
         if not clusters_response:
             logger.error(f"Failed to fetch clusters for project {project_name}")
@@ -152,25 +167,35 @@ def delete_all_clusters_in_org(org_id: str) -> bool:
 
         for cluster in clusters:
             cluster_name = cluster.get("name")
-            
+
             if not cluster_name:
-                logger.warning(f"Skipping cluster with missing name in project {project_name}")
+                logger.warning(
+                    f"Skipping cluster with missing name in project {project_name}"
+                )
                 continue
-                
+
             logger.info(f"Deleting cluster: {cluster_name} in project {project_name}")
 
             # Delete the cluster
-            delete_url = f"{ATLAS_API_BASE_URL}/groups/{project_id}/clusters/{cluster_name}"
-            delete_response = make_atlas_api_request("DELETE", delete_url, headers=headers, auth=auth)
+            delete_url = (
+                f"{ATLAS_API_BASE_URL}/groups/{project_id}/clusters/{cluster_name}"
+            )
+            delete_response = make_atlas_api_request(
+                "DELETE", delete_url, headers=headers, auth=auth
+            )
 
             if delete_response and delete_response.status_code == 202:
-                logger.info(f"Successfully initiated deletion for cluster: {cluster_name}")
+                logger.info(
+                    f"Successfully initiated deletion for cluster: {cluster_name}"
+                )
                 total_clusters_deleted += 1
             else:
                 logger.error(f"Failed to delete cluster: {cluster_name}")
                 total_failures += 1
 
-    logger.info(f"Operation completed. Clusters deleted: {total_clusters_deleted}, Failures: {total_failures}")
+    logger.info(
+        f"Operation completed. Clusters deleted: {total_clusters_deleted}, Failures: {total_failures}"
+    )
     return total_failures == 0
 
 
@@ -178,26 +203,26 @@ def main():
     """Main function with comprehensive error handling."""
     try:
         logger.info("Starting MongoDB Atlas cluster deletion tool")
-        
+
         # Confirm destructive operation
         print("⚠️  WARNING: This will delete ALL clusters in the organization!")
         print(f"Organization ID: {ORGANIZATION_ID}")
         confirm = input("Type 'DELETE ALL CLUSTERS' to confirm: ")
-        
+
         if confirm != "DELETE ALL CLUSTERS":
             logger.info("Operation cancelled by user")
             print("Operation cancelled.")
             return 0
-            
+
         success = delete_all_clusters_in_org(ORGANIZATION_ID)
-        
+
         if success:
             logger.info("All operations completed successfully")
             return 0
         else:
             logger.error("Some operations failed")
             return 1
-            
+
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user")
         print("\nOperation interrupted.")

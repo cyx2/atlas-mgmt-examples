@@ -11,13 +11,13 @@ Prerequisites:
 
 Environment Variables:
     ATLAS_PUBLIC_KEY: MongoDB Atlas API Public Key
-    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key  
+    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key
     ATLAS_ORG_ID: Atlas Organization ID
     ATLAS_API_BASE_URL: (Optional) Atlas API Base URL
 
 Usage:
     python delete_empty_projects_in_organization.py [--dry-run] [--auto-confirm]
-    
+
 Options:
     --dry-run: Show what would be deleted without performing actions
     --auto-confirm: Skip confirmation prompts (use with caution)
@@ -52,7 +52,9 @@ logger = logging.getLogger("atlas_empty_projects_cleaner")
 load_dotenv()
 
 # --- Configuration Constants ---
-ATLAS_API_BASE_URL = os.getenv("ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2")
+ATLAS_API_BASE_URL = os.getenv(
+    "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
+)
 
 
 class AtlasAPI:
@@ -295,23 +297,25 @@ def validate_credentials():
     """Validate that all required environment variables are present."""
     required_vars = ["ATLAS_PUBLIC_KEY", "ATLAS_PRIVATE_KEY", "ATLAS_ORG_ID"]
     missing_vars = []
-    
+
     for var in required_vars:
         if not os.getenv(var):
             missing_vars.append(var)
-    
+
     if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing_vars)}"
+        )
 
 
 def main():
     """Main function with comprehensive error handling and user confirmation."""
     try:
         logger.info("Starting MongoDB Atlas Empty Projects Cleaner...")
-        
+
         # Validate credentials first
         validate_credentials()
-        
+
         import argparse
 
         parser = argparse.ArgumentParser(
@@ -336,9 +340,9 @@ def main():
             print("⚠️  WARNING: This script will DELETE empty Atlas projects!")
             print(f"Organization ID: {os.getenv('ATLAS_ORG_ID')}")
             print("Projects without clusters will be permanently removed.")
-            
+
             confirm = input("\nType 'DELETE EMPTY PROJECTS' to confirm: ")
-            
+
             if confirm != "DELETE EMPTY PROJECTS":
                 logger.info("Operation cancelled by user")
                 print("Operation cancelled.")
@@ -364,7 +368,7 @@ def main():
             print(f"Failed deletions: {report['summary']['failed_deletions']}")
 
         print("\nDetailed report saved to logs/atlas_empty_projects_report.json")
-        
+
         logger.info("Empty projects cleaner completed successfully")
         return 0
 

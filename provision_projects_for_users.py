@@ -12,13 +12,13 @@ Prerequisites:
 
 Environment Variables:
     ATLAS_PUBLIC_KEY: MongoDB Atlas API Public Key
-    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key  
+    ATLAS_PRIVATE_KEY: MongoDB Atlas API Private Key
     ATLAS_ORG_ID: Atlas Organization ID
     ATLAS_API_BASE_URL: (Optional) Atlas API Base URL
 
 Usage:
     python provision_projects_for_users.py --action <action> [--emails email1 email2 ...]
-    
+
 Actions:
     - provision: Create projects and clusters
     - delete-clusters: Delete clusters for specified emails
@@ -42,7 +42,10 @@ from requests.auth import HTTPDigestAuth
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("logs/atlas_provisioner.log"), logging.StreamHandler()],
+    handlers=[
+        logging.FileHandler("logs/atlas_provisioner.log"),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger("atlas_provisioner")
 
@@ -50,7 +53,9 @@ logger = logging.getLogger("atlas_provisioner")
 load_dotenv()
 
 # --- Configuration Constants ---
-ATLAS_API_BASE_URL = os.getenv("ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2")
+ATLAS_API_BASE_URL = os.getenv(
+    "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
+)
 
 # Define the list of email addresses here
 EMAILS_TO_PROVISION = [
@@ -70,7 +75,7 @@ class AtlasAPI:
         self.public_key = os.getenv("ATLAS_PUBLIC_KEY")
         self.private_key = os.getenv("ATLAS_PRIVATE_KEY")
         self.org_id = os.getenv("ATLAS_ORG_ID")
-        
+
         # Track API request failures for reporting
         self.failed_requests = []
         self.total_requests = 0
@@ -119,7 +124,7 @@ class AtlasAPI:
         url = f"{self.base_url}{endpoint}"
         headers = {"Accept": "application/vnd.atlas.2025-02-19+json"}
         auth = HTTPDigestAuth(self.public_key, self.private_key)
-        
+
         # Track this request
         self.total_requests += 1
 
@@ -139,11 +144,15 @@ class AtlasAPI:
 
                     if r["error"] == 409 and r["errorCode"] == "GROUP_ALREADY_EXISTS":
                         logger.info(f"Project {r["parameters"][0]} already exists.")
-                        self.successful_requests += 1  # Treat as success since project exists
+                        self.successful_requests += (
+                            1  # Treat as success since project exists
+                        )
                         return r, False
                     elif r["error"] == 409 and r["errorCode"] == "USER_ALREADY_EXISTS":
                         logger.info(f"User {r["parameters"][0]} already exists.")
-                        self.successful_requests += 1  # Treat as success since user exists
+                        self.successful_requests += (
+                            1  # Treat as success since user exists
+                        )
                         return r, False
                     else:
                         logger.warning(
@@ -157,7 +166,7 @@ class AtlasAPI:
                             "error": r.get("error", "Unknown error"),
                             "error_code": r.get("errorCode", "Unknown error code"),
                             "attempt": attempt + 1,
-                            "max_attempts": retry + 1
+                            "max_attempts": retry + 1,
                         }
                         self.failed_requests.append(failure_info)
 
@@ -179,11 +188,15 @@ class AtlasAPI:
                     failure_info = {
                         "method": method.upper(),
                         "endpoint": endpoint,
-                        "status_code": getattr(e.response, 'status_code', 'N/A') if hasattr(e, 'response') and e.response else 'N/A',
+                        "status_code": (
+                            getattr(e.response, "status_code", "N/A")
+                            if hasattr(e, "response") and e.response
+                            else "N/A"
+                        ),
                         "error": str(e),
                         "error_code": "REQUEST_EXCEPTION",
                         "attempt": attempt + 1,
-                        "max_attempts": retry + 1
+                        "max_attempts": retry + 1,
                     }
                     self.failed_requests.append(failure_info)
                     return {"error": str(e)}, False
@@ -317,7 +330,11 @@ class AtlasAPI:
             "total_requests": self.total_requests,
             "successful_requests": self.successful_requests,
             "failed_requests": len(self.failed_requests),
-            "success_rate": (self.successful_requests / self.total_requests * 100) if self.total_requests > 0 else 0
+            "success_rate": (
+                (self.successful_requests / self.total_requests * 100)
+                if self.total_requests > 0
+                else 0
+            ),
         }
 
     def get_failure_details(self) -> List[Dict]:
@@ -399,12 +416,12 @@ class AtlasProvisioner:
     def __init__(self):
         self.api = AtlasAPI()
         self.tracker = AtlasOwnershipTracker()
-        
+
         # Track operation results
         self.operation_results = {
             "provision": {"success": 0, "failed": 0, "failed_emails": []},
             "delete_clusters": {"success": 0, "failed": 0, "failed_emails": []},
-            "delete_projects": {"success": 0, "failed": 0, "failed_emails": []}
+            "delete_projects": {"success": 0, "failed": 0, "failed_emails": []},
         }
 
     def provision_for_emails(self, emails: List[str]):
@@ -471,7 +488,9 @@ class AtlasProvisioner:
 
                 if email not in user_emails:
                     # Invite the user if not already in the project
-                    if self.api.invite_user_to_project(project_id, email, "GROUP_OWNER"):
+                    if self.api.invite_user_to_project(
+                        project_id, email, "GROUP_OWNER"
+                    ):
                         logger.info(
                             f"Invited {email} to existing project {project_id} with GROUP_OWNER role"
                         )
@@ -480,7 +499,9 @@ class AtlasProvisioner:
                             f"Failed to invite {email} to existing project {project_id}"
                         )
                 else:
-                    logger.info(f"User {email} is already a member of project {project_id}")
+                    logger.info(
+                        f"User {email} is already a member of project {project_id}"
+                    )
 
             # Check if the project has a cluster
             clusters = self.api.get_clusters_in_project(project_id)
@@ -490,7 +511,9 @@ class AtlasProvisioner:
                 cluster_name = "sandbox-cluster"
 
                 if self.api.create_cluster(project_id, cluster_name, email):
-                    logger.info(f"Created cluster {cluster_name} in project {project_id}")
+                    logger.info(
+                        f"Created cluster {cluster_name} in project {project_id}"
+                    )
                     self.operation_results["provision"]["success"] += 1
                 else:
                     logger.error(
@@ -499,9 +522,11 @@ class AtlasProvisioner:
                     self.operation_results["provision"]["failed"] += 1
                     self.operation_results["provision"]["failed_emails"].append(email)
             else:
-                logger.info(f"Project {project_id} already has {len(clusters)} clusters")
+                logger.info(
+                    f"Project {project_id} already has {len(clusters)} clusters"
+                )
                 self.operation_results["provision"]["success"] += 1
-                
+
         except Exception as e:
             logger.error(f"Exception during provisioning for {email}: {str(e)}")
             self.operation_results["provision"]["failed"] += 1
@@ -567,7 +592,7 @@ class AtlasProvisioner:
                 self.operation_results["delete_clusters"]["failed_emails"].append(email)
 
             return True
-            
+
         except Exception as e:
             logger.error(f"Exception during cluster deletion for {email}: {str(e)}")
             self.operation_results["delete_clusters"]["failed"] += 1
@@ -610,7 +635,7 @@ class AtlasProvisioner:
                 logger.error(f"Failed to delete project {project_id}")
                 self.operation_results["delete_projects"]["failed"] += 1
                 self.operation_results["delete_projects"]["failed_emails"].append(email)
-                
+
         except Exception as e:
             logger.error(f"Exception during project deletion for {email}: {str(e)}")
             self.operation_results["delete_projects"]["failed"] += 1
@@ -652,7 +677,7 @@ class AtlasProvisioner:
             "delete_cluster_results": self.operation_results["delete_clusters"].copy(),
             "delete_project_results": self.operation_results["delete_projects"].copy(),
             "api_summary": self.api.get_request_summary(),
-            "has_failures": self.has_any_failures()
+            "has_failures": self.has_any_failures(),
         }
 
     def has_any_failures(self) -> bool:
@@ -665,28 +690,32 @@ class AtlasProvisioner:
     def print_detailed_summary(self):
         """Print detailed summary of operations and failures"""
         summary = self.get_operation_summary()
-        
-        print("\n" + "="*60)
+
+        print("\n" + "=" * 60)
         print("OPERATION SUMMARY")
-        print("="*60)
-        
+        print("=" * 60)
+
         # API Summary
         api_summary = summary["api_summary"]
-        print(f"API Requests: {api_summary['total_requests']} total, "
-              f"{api_summary['successful_requests']} successful, "
-              f"{api_summary['failed_requests']} failed "
-              f"({api_summary['success_rate']:.1f}% success rate)")
-        
+        print(
+            f"API Requests: {api_summary['total_requests']} total, "
+            f"{api_summary['successful_requests']} successful, "
+            f"{api_summary['failed_requests']} failed "
+            f"({api_summary['success_rate']:.1f}% success rate)"
+        )
+
         # Operation Results
         for operation, results in summary.items():
             if operation.endswith("_results"):
                 op_name = operation.replace("_results", "").replace("_", " ").title()
                 total = results["success"] + results["failed"]
                 if total > 0:
-                    print(f"\n{op_name}: {total} total, {results['success']} successful, {results['failed']} failed")
+                    print(
+                        f"\n{op_name}: {total} total, {results['success']} successful, {results['failed']} failed"
+                    )
                     if results["failed_emails"]:
                         print(f"  Failed emails: {', '.join(results['failed_emails'])}")
-        
+
         # API Failure Details
         if self.api.has_failures():
             print(f"\nAPI FAILURE DETAILS:")
@@ -695,31 +724,38 @@ class AtlasProvisioner:
                 print(f"{i}. {failure['method']} {failure['endpoint']}")
                 print(f"   Status: {failure['status_code']}, Error: {failure['error']}")
                 print(f"   Attempts: {failure['attempt']}/{failure['max_attempts']}")
-        
-        print("="*60)
+
+        print("=" * 60)
 
 
 def validate_credentials():
     """Validate that all required environment variables are present."""
-    required_vars = ["ATLAS_PUBLIC_KEY", "ATLAS_PRIVATE_KEY", "ATLAS_ORG_ID", "ATLAS_API_BASE_URL"]
+    required_vars = [
+        "ATLAS_PUBLIC_KEY",
+        "ATLAS_PRIVATE_KEY",
+        "ATLAS_ORG_ID",
+        "ATLAS_API_BASE_URL",
+    ]
     missing_vars = []
-    
+
     for var in required_vars:
         if not os.getenv(var):
             missing_vars.append(var)
-    
+
     if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing_vars)}"
+        )
 
 
 def main():
     """Main function with comprehensive error handling and user confirmation."""
     try:
         logger.info("Starting MongoDB Atlas Provisioner...")
-        
+
         # Validate credentials first
         validate_credentials()
-        
+
         import argparse
 
         parser = argparse.ArgumentParser(description="MongoDB Atlas Provisioner")
@@ -727,7 +763,7 @@ def main():
             "--action",
             choices=[
                 "provision",
-                "delete-clusters", 
+                "delete-clusters",
                 "delete-projects",
                 "delete-all-clusters",
                 "delete-all-projects",
@@ -745,13 +781,18 @@ def main():
 
         # Initialize provisioner
         provisioner = AtlasProvisioner()
-        
+
         # Get confirmation for destructive operations
-        if args.action in ["delete-clusters", "delete-projects", "delete-all-clusters", "delete-all-projects"]:
+        if args.action in [
+            "delete-clusters",
+            "delete-projects",
+            "delete-all-clusters",
+            "delete-all-projects",
+        ]:
             print(f"⚠️  WARNING: This will perform DESTRUCTIVE operations!")
             print(f"Organization ID: {os.getenv('ATLAS_ORG_ID')}")
             print(f"Action: {args.action}")
-            
+
             if args.action in ["delete-all-clusters", "delete-all-projects"]:
                 confirm = input(f"\nType 'DELETE ALL' to confirm {args.action}: ")
                 if confirm != "DELETE ALL":
@@ -760,7 +801,9 @@ def main():
                     return 0
             else:
                 emails = args.emails or []
-                print(f"Target emails: {', '.join(emails) if emails else 'None specified'}")
+                print(
+                    f"Target emails: {', '.join(emails) if emails else 'None specified'}"
+                )
                 confirm = input(f"\nType 'CONFIRM DELETE' to proceed: ")
                 if confirm != "CONFIRM DELETE":
                     logger.info("Operation cancelled by user")
@@ -773,7 +816,9 @@ def main():
 
             if not emails:
                 logger.error("No emails provided for provisioning")
-                print("Error: No emails specified for provisioning. Use --emails or update EMAILS_TO_PROVISION constant.")
+                print(
+                    "Error: No emails specified for provisioning. Use --emails or update EMAILS_TO_PROVISION constant."
+                )
                 return 1
 
             logger.info(f"Starting provisioning for {len(emails)} emails")
@@ -785,7 +830,9 @@ def main():
 
             if not emails:
                 logger.error("No emails provided for cluster deletion")
-                print("Error: No emails specified for cluster deletion. Use --emails parameter.")
+                print(
+                    "Error: No emails specified for cluster deletion. Use --emails parameter."
+                )
                 return 1
 
             logger.info(f"Starting cluster deletion for {len(emails)} emails")
@@ -797,7 +844,9 @@ def main():
 
             if not emails:
                 logger.error("No emails provided for project deletion")
-                print("Error: No emails specified for project deletion. Use --emails parameter.")
+                print(
+                    "Error: No emails specified for project deletion. Use --emails parameter."
+                )
                 return 1
 
             logger.info(f"Starting project deletion for {len(emails)} emails")
