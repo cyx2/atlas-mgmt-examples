@@ -105,6 +105,60 @@ def make_atlas_api_request(
         return None
 
 
+def get_all_paginated_projects(org_id: str, auth, headers: dict) -> list:
+    """
+    Retrieve all projects from a paginated Atlas API endpoint.
+
+    Args:
+        org_id: The organization ID
+        auth: HTTPDigestAuth object for authentication
+        headers: Request headers
+
+    Returns:
+        List of all projects across all pages
+    """
+    all_projects = []
+    projects_url = f"{ATLAS_API_BASE_URL}/orgs/{org_id}/groups"
+    params = {"itemsPerPage": 500}  # Max items per page
+    current_page = 1
+    max_pages = 100  # Safety limit
+
+    while True:
+        params["pageNum"] = current_page
+        response = make_atlas_api_request(
+            "GET", projects_url, headers=headers, auth=auth, params=params
+        )
+
+        # Check if API request failed
+        if not response:
+            logger.error(f"API request failed for {projects_url} (page {current_page})")
+            break
+
+        data = response.json()
+        projects = data.get("results", [])
+
+        if not projects:
+            break
+
+        all_projects.extend(projects)
+        logger.info(f"Retrieved {len(projects)} projects from page {current_page}")
+
+        # Check if there are more pages (Atlas uses a "links" array with "next" relation)
+        if not any(link.get("rel") == "next" for link in data.get("links", [])):
+            break
+
+        current_page += 1
+        if current_page > max_pages:  # Safety break
+            logger.warning(
+                f"Reached max_pages ({max_pages}) limit for {projects_url}. "
+                f"Not all projects might be fetched."
+            )
+            break
+
+    logger.info(f"Total projects retrieved: {len(all_projects)}")
+    return all_projects
+
+
 def pause_all_clusters_in_org(org_id: str) -> bool:
     """
     Pause all clusters within Atlas projects in an organization.
@@ -127,15 +181,13 @@ def pause_all_clusters_in_org(org_id: str) -> bool:
     }
     auth = HTTPDigestAuth(PUBLIC_KEY, PRIVATE_KEY)
 
-    # Get all projects in the organization
-    projects_url = f"{ATLAS_API_BASE_URL}/orgs/{org_id}/groups"
-    response = make_atlas_api_request("GET", projects_url, headers=headers, auth=auth)
+    # Get all projects in the organization (with pagination support)
+    projects = get_all_paginated_projects(org_id, auth, headers)
 
-    if not response:
-        logger.error("Failed to fetch projects from organization")
+    if not projects:
+        logger.error("Failed to fetch projects from organization or no projects found")
         return False
 
-    projects = response.json().get("results", [])
     logger.info(f"Found {len(projects)} projects in organization")
 
     total_clusters_paused = 0
