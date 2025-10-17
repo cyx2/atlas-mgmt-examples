@@ -215,5 +215,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Logs folder
+# Logs folder - ignore everything in logs directory
 logs/
