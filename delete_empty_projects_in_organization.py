@@ -100,7 +100,12 @@ class AtlasAPI:
         )
 
     def _make_request(
-        self, method: str, endpoint: str, data: Optional[Dict] = None, retry: int = 1
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict] = None,
+        retry: int = 1,
+        params: Optional[Dict] = None,
     ) -> Tuple[Dict, bool]:
         """
         Makes a request to the Atlas API with retry mechanism
@@ -113,11 +118,17 @@ class AtlasAPI:
         for attempt in range(retry + 1):
             try:
                 if method.lower() == "get":
-                    response = requests.get(url, auth=auth, headers=headers)
+                    response = requests.get(
+                        url, auth=auth, headers=headers, params=params
+                    )
                 elif method.lower() == "post":
-                    response = requests.post(url, auth=auth, headers=headers, json=data)
+                    response = requests.post(
+                        url, auth=auth, headers=headers, json=data, params=params
+                    )
                 elif method.lower() == "delete":
-                    response = requests.delete(url, auth=auth, headers=headers)
+                    response = requests.delete(
+                        url, auth=auth, headers=headers, params=params
+                    )
 
                 # Log the full response for debugging
                 if response.status_code != 200:
@@ -141,14 +152,45 @@ class AtlasAPI:
                     return {"error": str(e)}, False
 
     def get_projects_in_org(self) -> List[Dict]:
-        """Get all projects in the organization"""
-        # API v2 uses this endpoint format for projects
-        endpoint = f"/groups?orgId={self.org_id}"
-        result, success = self._make_request("get", endpoint, retry=2)
+        """Get all projects in the organization with pagination support"""
+        all_projects = []
+        endpoint = f"/groups"
+        base_params = {"orgId": self.org_id, "itemsPerPage": 500}  # Max items per page
+        current_page = 1
+        max_pages = 100  # Safety limit
 
-        if success:
-            return result.get("results", [])
-        return []
+        while True:
+            params = {**base_params, "pageNum": current_page}
+            result, success = self._make_request(
+                "get", endpoint, retry=2, params=params
+            )
+
+            if not success:
+                logger.error(f"API request failed for {endpoint} (page {current_page})")
+                break
+
+            projects = result.get("results", [])
+
+            if not projects:
+                break
+
+            all_projects.extend(projects)
+            logger.info(f"Retrieved {len(projects)} projects from page {current_page}")
+
+            # Check if there are more pages (Atlas uses a "links" array with "next" relation)
+            if not any(link.get("rel") == "next" for link in result.get("links", [])):
+                break
+
+            current_page += 1
+            if current_page > max_pages:  # Safety break
+                logger.warning(
+                    f"Reached max_pages ({max_pages}) limit for {endpoint}. "
+                    f"Not all projects might be fetched."
+                )
+                break
+
+        logger.info(f"Total projects retrieved: {len(all_projects)}")
+        return all_projects
 
     def get_clusters_in_project(self, project_id: str) -> List[Dict]:
         """Get all clusters in a project"""
