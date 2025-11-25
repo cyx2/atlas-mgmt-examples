@@ -49,9 +49,9 @@ load_dotenv()
 ATLAS_API_BASE_URL = os.getenv(
     "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
 )
-PUBLIC_KEY: Optional[str] = os.getenv("ATLAS_PUBLIC_KEY")
-PRIVATE_KEY: Optional[str] = os.getenv("ATLAS_PRIVATE_KEY")
-ORGANIZATION_ID: Optional[str] = os.getenv("ATLAS_ORG_ID")
+PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
+PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
+ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
 
 
 # Load email addresses from CSV file
