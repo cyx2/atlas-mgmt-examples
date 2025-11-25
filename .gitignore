@@ -217,3 +217,5 @@ __marimo__/
 
 # Logs folder - ignore everything in logs directory
 logs/
+
+*invitees.csv

@@ -301,122 +301,6 @@ class TestDeleteAtlasResource:
                 assert not result
 
 
-class TestGetAtlasOrgInvitations:
-    """Tests for get_atlas_org_invitations function."""
-
-    def test_get_invitations_list_response(
-        self, mock_env_vars, mock_response, sample_invitations
-    ):
-        """Test getting invitations when API returns a list."""
-        with patch.dict(os.environ, mock_env_vars):
-            import cleanup_aged_projects_and_clusters as module
-
-            with patch("requests.request") as mock_request:
-                mock_request.return_value = mock_response(200, sample_invitations)
-
-                from requests.auth import HTTPDigestAuth
-
-                auth = HTTPDigestAuth("user", "pass")
-                result = module.get_atlas_org_invitations("org123", auth)
-
-                assert len(result) == 2
-
-    def test_get_invitations_api_failure_returns_empty(self, mock_env_vars):
-        """Test handling API failure when getting invitations."""
-        with patch.dict(os.environ, mock_env_vars):
-            import cleanup_aged_projects_and_clusters as module
-
-            with patch("requests.request") as mock_request:
-                mock_request.side_effect = requests.exceptions.RequestException(
-                    "API Error"
-                )
-
-                from requests.auth import HTTPDigestAuth
-
-                auth = HTTPDigestAuth("user", "pass")
-                result = module.get_atlas_org_invitations("org123", auth)
-
-                assert result == []
-
-
-class TestDeleteAtlasOrgInvitation:
-    """Tests for delete_atlas_org_invitation function."""
-
-    def test_delete_invitation_success(self, mock_env_vars, mock_response):
-        """Test successful invitation deletion."""
-        with patch.dict(os.environ, mock_env_vars):
-            import cleanup_aged_projects_and_clusters as module
-
-            with patch("requests.request") as mock_request:
-                mock_request.return_value = mock_response(204)
-
-                from requests.auth import HTTPDigestAuth
-
-                auth = HTTPDigestAuth("user", "pass")
-                result = module.delete_atlas_org_invitation("org123", "invite123", auth)
-
-                assert result is True
-
-    def test_delete_invitation_failure(self, mock_env_vars):
-        """Test failed invitation deletion."""
-        with patch.dict(os.environ, mock_env_vars):
-            import cleanup_aged_projects_and_clusters as module
-
-            with patch("requests.request") as mock_request:
-                mock_request.side_effect = requests.exceptions.RequestException(
-                    "API Error"
-                )
-
-                from requests.auth import HTTPDigestAuth
-
-                auth = HTTPDigestAuth("user", "pass")
-                result = module.delete_atlas_org_invitation("org123", "invite123", auth)
-
-                assert result is False
-
-
-class TestDeleteInvitationsForOldProjects:
-    """Tests for delete_invitations_for_old_projects function."""
-
-    def test_deletes_all_invitations_when_old_projects_exist(
-        self, mock_env_vars, mock_response, sample_invitations
-    ):
-        """Test all invitations are deleted when old projects exist."""
-        with patch.dict(os.environ, mock_env_vars):
-            import cleanup_aged_projects_and_clusters as module
-
-            with patch("requests.request") as mock_request:
-                mock_request.return_value = mock_response(204)
-
-                from requests.auth import HTTPDigestAuth
-
-                auth = HTTPDigestAuth("user", "pass")
-                old_project_ids = {"project1"}
-
-                successful, failed = module.delete_invitations_for_old_projects(
-                    "org123", sample_invitations, old_project_ids, auth
-                )
-
-                assert successful == 2
-                assert failed == 0
-
-    def test_no_deletion_when_no_old_projects(self, mock_env_vars, sample_invitations):
-        """Test no invitations deleted when no old projects exist."""
-        with patch.dict(os.environ, mock_env_vars):
-            from requests.auth import HTTPDigestAuth
-
-            import cleanup_aged_projects_and_clusters as module
-
-            auth = HTTPDigestAuth("user", "pass")
-
-            successful, failed = module.delete_invitations_for_old_projects(
-                "org123", sample_invitations, set(), auth
-            )
-
-            assert successful == 0
-            assert failed == 0
-
-
 class TestShowWarningAndConfirm:
     """Tests for show_warning_and_confirm function."""
 
@@ -556,7 +440,7 @@ class TestMain:
                 with patch("requests.request") as mock_request:
                     mock_request.side_effect = [
                         mock_response(200, paginated_response_factory([old_project])),
-                        mock_response(200, []),  # invitations
+                        mock_response(200, []),  # group invitations
                         mock_response(200, paginated_response_factory([])),  # db users
                         mock_response(
                             200, paginated_response_factory([])
@@ -581,11 +465,15 @@ class TestModuleInitialization:
         Test that load_dotenv() is called at module level, not just in main().
         This ensures environment variables are loaded before functions try to read them.
         """
-        with patch.dict(os.environ, {
-            "ATLAS_PUBLIC_KEY": "test_public_key",
-            "ATLAS_PRIVATE_KEY": "test_private_key",
-            "ATLAS_ORG_ID": "test_org_id",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "ATLAS_PUBLIC_KEY": "test_public_key",
+                "ATLAS_PRIVATE_KEY": "test_private_key",
+                "ATLAS_ORG_ID": "test_org_id",
+            },
+            clear=True,
+        ):
             # Temporarily disable the autouse mock_load_dotenv fixture
             # by patching dotenv.load_dotenv before module import
             import importlib
@@ -603,9 +491,11 @@ class TestModuleInitialization:
                 assert (
                     mock_load.called
                 ), "load_dotenv() should be called at module level during import"
-                
+
                 # Verify that get_env_variable can read from environment
                 # (This script uses get_env_variable helper function)
                 assert module.get_env_variable("ATLAS_PUBLIC_KEY") == "test_public_key"
-                assert module.get_env_variable("ATLAS_PRIVATE_KEY") == "test_private_key"
+                assert (
+                    module.get_env_variable("ATLAS_PRIVATE_KEY") == "test_private_key"
+                )
                 assert module.get_env_variable("ATLAS_ORG_ID") == "test_org_id"

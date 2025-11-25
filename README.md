@@ -34,7 +34,7 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 | Script | Purpose | Key Features |
 |--------|---------|-------------|
 | `invite_users_to_organization.py` | User management | Bulk user invitations with role assignments |
-| `cleanup_aged_projects_and_clusters.py` | Legacy cleanup | Remove users from old projects (90+ days), cluster deletion (120+ days) |
+| `cleanup_aged_projects_and_clusters.py` | Legacy cleanup | Remove users and group invitations from old projects (90+ days), cluster deletion (120+ days) |
 
 ## Detailed Script Information
 
@@ -46,9 +46,11 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 
 ### cleanup_aged_projects_and_clusters.py  
 **Purpose:** Automated cleanup of aged Atlas resources
-- **Age Thresholds:** 90 days (users), 120 days (clusters)
+- **Age Thresholds:** 90 days (users and group invitations), 120 days (clusters)
 - **Usage:** `python cleanup_aged_projects_and_clusters.py`
-- **Operations:** User removal, cluster deletion, invitation cleanup
+- **Operations:** 
+  - Projects older than 90 days: Delete all group (project) invitations, remove all database users and Atlas users
+  - Projects older than 120 days: Delete all clusters
 
 ### delete_empty_projects_in_organization.py
 **Purpose:** Identify and remove projects with no clusters
