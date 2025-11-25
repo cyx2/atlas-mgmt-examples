@@ -730,11 +730,11 @@ class AtlasProvisioner:
 
 def validate_credentials():
     """Validate that all required environment variables are present."""
+    # Note: ATLAS_API_BASE_URL is not required as it has a default value
     required_vars = [
         "ATLAS_PUBLIC_KEY",
         "ATLAS_PRIVATE_KEY",
         "ATLAS_ORG_ID",
-        "ATLAS_API_BASE_URL",
     ]
     missing_vars = []
 

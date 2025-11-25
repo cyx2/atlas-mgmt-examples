@@ -78,10 +78,6 @@ def validate_atlas_credentials():
     logger.info("Atlas API credentials validated successfully")
 
 
-# Validate credentials after logger is configured
-validate_atlas_credentials()
-
-
 def make_atlas_api_request(
     method: str, url: str, **kwargs
 ) -> Optional[requests.Response]:
@@ -261,6 +257,9 @@ def pause_all_clusters_in_org(org_id: str) -> bool:
 def main():
     """Main function with comprehensive error handling."""
     try:
+        # Validate credentials
+        validate_atlas_credentials()
+
         logger.info("Starting MongoDB Atlas cluster pause tool")
 
         # Confirm operation

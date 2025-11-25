@@ -31,9 +31,6 @@ import requests
 from dotenv import load_dotenv
 from requests.auth import HTTPDigestAuth
 
-# Load environment variables
-load_dotenv()
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +41,9 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("invite_users_to_org")
+
+# Load environment variables
+load_dotenv()
 
 # --- Configuration Constants ---
 ATLAS_API_BASE_URL = os.getenv(
@@ -83,8 +83,8 @@ def load_emails_from_csv(csv_file_path: str) -> List[str]:
     return emails
 
 
-# Load email addresses from invitees.csv
-EMAILS_TO_PROVISION = load_emails_from_csv("invitees.csv")
+# Email list will be loaded at runtime in main()
+EMAILS_TO_PROVISION: List[str] = []
 
 
 # Validate required credentials
@@ -107,12 +107,6 @@ def validate_atlas_credentials():
         raise ValueError(
             f"Missing required Atlas API credentials: {', '.join(missing_vars)}"
         )
-
-    logger.info("Atlas API credentials validated successfully")
-
-
-# Validate credentials on import
-validate_atlas_credentials()
 
 
 def validate_email(email: str) -> bool:
@@ -215,8 +209,20 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
 
 def main():
     """Main function with comprehensive error handling."""
+    global EMAILS_TO_PROVISION
     try:
         logger.info("Starting MongoDB Atlas user invitation tool")
+
+        # Validate credentials at runtime
+        validate_atlas_credentials()
+
+        # Load emails from CSV at runtime
+        try:
+            EMAILS_TO_PROVISION = load_emails_from_csv("invitees.csv")
+        except FileNotFoundError:
+            logger.error("invitees.csv not found. Please create the file with email addresses.")
+            print("Error: invitees.csv not found. Please create the file with email addresses.")
+            return 1
 
         if not EMAILS_TO_PROVISION:
             logger.warning("No emails configured for invitation")

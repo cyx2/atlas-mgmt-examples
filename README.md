@@ -28,6 +28,7 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 | `provision_projects_for_users.py` | Project & cluster automation | Bulk provisioning, user invites, M0 clusters, multiple actions |
 | `delete_empty_projects_in_organization.py` | Resource optimization | Find and remove projects with no clusters, dry-run mode |
 | `delete_all_clusters_in_organization.py` | Cluster management | Organization-wide cluster deletion with safety prompts |
+| `pause_all_clusters_in_organization.py` | Cost management | Pause all clusters across organization for temporary shutdown |
 
 ### User & Access Management  
 | Script | Purpose | Key Features |
@@ -64,10 +65,16 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 - **Usage:** `python invite_users_to_organization.py`
 - **Features:** Role-based invitations, batch processing
 
+### pause_all_clusters_in_organization.py
+**Purpose:** Pause all clusters across an organization
+- **Usage:** `python pause_all_clusters_in_organization.py`
+- **Features:** Organization-wide cluster pausing, cost management, temporary environment shutdown
+
 ## Prerequisites
 
 - **Python 3.6+** 
 - **Required packages:** `requests`, `python-dotenv`
+- **Test dependencies:** `pytest`, `pytest-cov` (for running tests)
 - **Valid Organization-level Atlas API credentials** with appropriate permissions
 
 ## Environment Setup
@@ -91,6 +98,43 @@ LOG_DIR=logs
 ```bash
 pip install -r requirements.txt
 ```
+
+This will install both runtime dependencies (`requests`, `python-dotenv`) and test dependencies (`pytest`, `pytest-cov`).
+
+## Testing
+
+The project includes a comprehensive test suite using pytest. All scripts have corresponding test files in the `tests/` directory.
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run tests with coverage report
+pytest --cov=. --cov-report=html
+
+# Run a specific test file
+pytest tests/test_provision_projects_for_users.py
+
+# Run tests in verbose mode
+pytest -v
+```
+
+### Test Configuration
+
+Test configuration is managed via `pytest.ini`:
+- Test discovery: `tests/` directory
+- Test pattern: `test_*.py` files
+- Verbose output by default
+- Shared fixtures available in `tests/conftest.py`
+
+### Test Features
+
+- **Mocked API calls** - Tests use mocked HTTP responses to avoid real API calls
+- **Isolated test environment** - Each test runs in isolation with fresh module imports
+- **Environment variable mocking** - Tests use mock credentials without requiring real `.env` files
+- **Comprehensive coverage** - Tests cover all major scripts and their core functionality
 
 ## Logging & Reports
 
