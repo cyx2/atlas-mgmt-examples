@@ -324,6 +324,17 @@ class TestShowWarningAndConfirm:
                 result = module.show_warning_and_confirm("test_org")
                 assert result is False
 
+    def test_no_confirm_flag_skips_prompt(self, mock_env_vars):
+        """Test that no_confirm=True skips the input prompt and returns True."""
+        with patch.dict(os.environ, mock_env_vars):
+            import cleanup_aged_projects_and_clusters as module
+
+            with patch("builtins.input") as mock_input:
+                result = module.show_warning_and_confirm("test_org", no_confirm=True)
+                assert result is True
+                # Verify input was never called when no_confirm is True
+                mock_input.assert_not_called()
+
 
 class TestCleanupFunctions:
     """Tests for cleanup_project_resources and cleanup_project_clusters functions."""
@@ -388,9 +399,39 @@ class TestMain:
         with patch.dict(os.environ, mock_env_vars):
             import cleanup_aged_projects_and_clusters as module
 
-            with patch("builtins.input", return_value="no"):
-                result = module.main()
-                assert result == 0
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py"]):
+                with patch("builtins.input", return_value="no"):
+                    result = module.main()
+                    assert result == 0
+
+    def test_main_requires_exact_confirmation_text(self, mock_env_vars):
+        """Test main function requires exact confirmation text and cancels if incorrect."""
+        with patch.dict(os.environ, mock_env_vars):
+            import cleanup_aged_projects_and_clusters as module
+
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py"]):
+                # Test with incorrect confirmation text (close but not exact)
+                incorrect_confirmations = [
+                    "reap projects older than 90 days",  # lowercase
+                    "REAP PROJECTS OLDER THAN 90 DAYS ",  # trailing space
+                    " REAP PROJECTS OLDER THAN 90 DAYS",  # leading space
+                    "REAP PROJECTS OLDER THAN 90 DAYS.",  # extra period
+                    "yes",  # simple yes
+                    "",  # empty string
+                ]
+
+                for incorrect_confirmation in incorrect_confirmations:
+                    with patch("builtins.input", return_value=incorrect_confirmation):
+                        with patch("requests.request") as mock_request:
+                            # If confirmation fails, main() should return early without making API calls
+                            result = module.main()
+                            assert result == 0, f"Should cancel with confirmation: '{incorrect_confirmation}'"
+                            # Verify no API requests were made when confirmation fails
+                            # get_atlas_projects() is called after confirmation, so it should never be called
+                            assert mock_request.call_count == 0, (
+                                f"No API calls should be made when confirmation fails. "
+                                f"Got {mock_request.call_count} calls with confirmation: '{incorrect_confirmation}'"
+                            )
 
     def test_main_no_projects_found(
         self, mock_env_vars, mock_response, paginated_response_factory
@@ -399,25 +440,27 @@ class TestMain:
         with patch.dict(os.environ, mock_env_vars):
             import cleanup_aged_projects_and_clusters as module
 
-            with patch(
-                "builtins.input", return_value="REAP PROJECTS OLDER THAN 90 DAYS"
-            ):
-                with patch("requests.request") as mock_request:
-                    mock_request.return_value = mock_response(
-                        200, paginated_response_factory([])
-                    )
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py"]):
+                with patch(
+                    "builtins.input", return_value="REAP PROJECTS OLDER THAN 90 DAYS"
+                ):
+                    with patch("requests.request") as mock_request:
+                        mock_request.return_value = mock_response(
+                            200, paginated_response_factory([])
+                        )
 
-                    result = module.main()
-                    assert result == 1
+                        result = module.main()
+                        assert result == 1
 
     def test_main_keyboard_interrupt(self, mock_env_vars):
         """Test main function handles KeyboardInterrupt."""
         with patch.dict(os.environ, mock_env_vars):
             import cleanup_aged_projects_and_clusters as module
 
-            with patch("builtins.input", side_effect=KeyboardInterrupt):
-                result = module.main()
-                assert result == 1
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py"]):
+                with patch("builtins.input", side_effect=KeyboardInterrupt):
+                    result = module.main()
+                    assert result == 1
 
     def test_main_processes_old_projects(
         self, mock_env_vars, mock_response, paginated_response_factory
@@ -434,22 +477,75 @@ class TestMain:
                 "created": old_date,
             }
 
-            with patch(
-                "builtins.input", return_value="REAP PROJECTS OLDER THAN 90 DAYS"
-            ):
-                with patch("requests.request") as mock_request:
-                    mock_request.side_effect = [
-                        mock_response(200, paginated_response_factory([old_project])),
-                        mock_response(200, []),  # group invitations
-                        mock_response(200, paginated_response_factory([])),  # db users
-                        mock_response(
-                            200, paginated_response_factory([])
-                        ),  # atlas users
-                        mock_response(200, paginated_response_factory([])),  # clusters
-                    ]
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py"]):
+                with patch(
+                    "builtins.input", return_value="REAP PROJECTS OLDER THAN 90 DAYS"
+                ):
+                    with patch("requests.request") as mock_request:
+                        mock_request.side_effect = [
+                            mock_response(200, paginated_response_factory([old_project])),
+                            mock_response(200, []),  # group invitations
+                            mock_response(200, paginated_response_factory([])),  # db users
+                            mock_response(
+                                200, paginated_response_factory([])
+                            ),  # atlas users
+                            mock_response(200, paginated_response_factory([])),  # clusters
+                        ]
 
-                    result = module.main()
-                    assert result == 0
+                        result = module.main()
+                        assert result == 0
+
+    def test_main_with_no_confirm_flag(
+        self, mock_env_vars, mock_response, paginated_response_factory
+    ):
+        """Test main function with --no-confirm flag skips confirmation."""
+        with patch.dict(os.environ, mock_env_vars):
+            import cleanup_aged_projects_and_clusters as module
+
+            # Create an old project (older than 120 days)
+            old_date = (datetime.now(timezone.utc) - timedelta(days=150)).isoformat()
+            old_project = {
+                "id": "old_project",
+                "name": "old-test-project",
+                "created": old_date,
+            }
+
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py", "--no-confirm"]):
+                with patch("builtins.input") as mock_input:
+                    with patch("requests.request") as mock_request:
+                        mock_request.side_effect = [
+                            mock_response(200, paginated_response_factory([old_project])),
+                            mock_response(200, []),  # group invitations
+                            mock_response(200, paginated_response_factory([])),  # db users
+                            mock_response(
+                                200, paginated_response_factory([])
+                            ),  # atlas users
+                            mock_response(200, paginated_response_factory([])),  # clusters
+                        ]
+
+                        result = module.main()
+                        assert result == 0
+                        # Verify input was never called when --no-confirm is used
+                        mock_input.assert_not_called()
+
+    def test_main_with_no_confirm_flag_no_projects(
+        self, mock_env_vars, mock_response, paginated_response_factory
+    ):
+        """Test main function with --no-confirm flag when no projects found."""
+        with patch.dict(os.environ, mock_env_vars):
+            import cleanup_aged_projects_and_clusters as module
+
+            with patch("sys.argv", ["cleanup_aged_projects_and_clusters.py", "--no-confirm"]):
+                with patch("builtins.input") as mock_input:
+                    with patch("requests.request") as mock_request:
+                        mock_request.return_value = mock_response(
+                            200, paginated_response_factory([])
+                        )
+
+                        result = module.main()
+                        assert result == 1
+                        # Verify input was never called when --no-confirm is used
+                        mock_input.assert_not_called()
 
 
 class TestModuleInitialization:

@@ -9,9 +9,10 @@ Environment Variables:
     ATLAS_PUBLIC_KEY, ATLAS_PRIVATE_KEY, ATLAS_ORG_ID
     ATLAS_API_BASE_URL (optional)
 
-Usage: python cleanup_aged_projects_and_clusters.py
+Usage: python cleanup_aged_projects_and_clusters.py [--no-confirm]
 """
 
+import argparse
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -232,8 +233,8 @@ def delete_all_group_invitations(
     return successful, failed
 
 
-def show_warning_and_confirm(org_id: str) -> bool:
-    """Show warning and get user confirmation."""
+def show_warning_and_confirm(org_id: str, no_confirm: bool = False) -> bool:
+    """Show warning and get user confirmation (unless no_confirm is True)."""
     print("⚠️  WARNING: This script will perform DESTRUCTIVE operations!")
     print(f"Organization ID: {org_id}")
     print(f"Projects older than {USER_DELETION_THRESHOLD} days:")
@@ -242,6 +243,10 @@ def show_warning_and_confirm(org_id: str) -> bool:
     print("  - All Atlas users removed")
     print(f"Projects older than {CLUSTER_DELETION_THRESHOLD} days:")
     print("  - All clusters deleted")
+
+    if no_confirm:
+        print("\n⚠️  Running without confirmation (--no-confirm flag set)")
+        return True
 
     confirm = input(
         f"\nType 'REAP PROJECTS OLDER THAN {USER_DELETION_THRESHOLD} DAYS' to confirm: "
@@ -290,12 +295,22 @@ def cleanup_project_clusters(
 
 def main():
     """Main function with error handling and user confirmation."""
+    parser = argparse.ArgumentParser(
+        description="Cleanup aged Atlas projects and clusters"
+    )
+    parser.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Skip confirmation prompt and proceed with cleanup",
+    )
+    args = parser.parse_args()
+
     try:
         logger.info("Starting MongoDB Atlas Reaper Script")
         validate_atlas_credentials()
 
         org_id = get_env_variable("ATLAS_ORG_ID")
-        if not show_warning_and_confirm(org_id):
+        if not show_warning_and_confirm(org_id, no_confirm=args.no_confirm):
             print("Operation cancelled.")
             return 0
 
