@@ -42,14 +42,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("invite_users_to_org")
 
+# Load environment variables
+load_dotenv()
+
 # --- Configuration Constants ---
-# These are set at runtime in main() after load_dotenv() is called
 ATLAS_API_BASE_URL = os.getenv(
     "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
 )
-PUBLIC_KEY: Optional[str] = None
-PRIVATE_KEY: Optional[str] = None
-ORGANIZATION_ID: Optional[str] = None
+PUBLIC_KEY: Optional[str] = os.getenv("ATLAS_PUBLIC_KEY")
+PRIVATE_KEY: Optional[str] = os.getenv("ATLAS_PRIVATE_KEY")
+ORGANIZATION_ID: Optional[str] = os.getenv("ATLAS_ORG_ID")
 
 
 # Load email addresses from CSV file
@@ -207,14 +209,8 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
 
 def main():
     """Main function with comprehensive error handling."""
-    global EMAILS_TO_PROVISION, PUBLIC_KEY, PRIVATE_KEY, ORGANIZATION_ID
+    global EMAILS_TO_PROVISION
     try:
-        # Load environment variables at runtime
-        load_dotenv()
-        PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
-        PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
-        ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
-
         logger.info("Starting MongoDB Atlas user invitation tool")
 
         # Validate credentials at runtime
