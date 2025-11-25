@@ -6,7 +6,7 @@ on:
       - "*"
 
 jobs:
-  test:
+  pytest:
     runs-on: ubuntu-latest
     container: python:3.12-alpine
 
