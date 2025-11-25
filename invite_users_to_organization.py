@@ -67,7 +67,7 @@ def load_emails_from_csv(csv_file_path: str) -> List[str]:
     """
     emails = []
     try:
-        with open(csv_file_path, "r", newline="") as csvfile:
+        with open(csv_file_path, "r", encoding="utf-8-sig", newline="") as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if row and row[0].strip():  # Skip empty rows
@@ -220,8 +220,12 @@ def main():
         try:
             EMAILS_TO_PROVISION = load_emails_from_csv("invitees.csv")
         except FileNotFoundError:
-            logger.error("invitees.csv not found. Please create the file with email addresses.")
-            print("Error: invitees.csv not found. Please create the file with email addresses.")
+            logger.error(
+                "invitees.csv not found. Please create the file with email addresses."
+            )
+            print(
+                "Error: invitees.csv not found. Please create the file with email addresses."
+            )
             return 1
 
         if not EMAILS_TO_PROVISION:
