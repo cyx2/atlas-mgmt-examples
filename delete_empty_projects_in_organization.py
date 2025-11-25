@@ -48,9 +48,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("atlas_empty_projects_cleaner")
 
-# Load environment variables
-load_dotenv()
-
 # --- Configuration Constants ---
 ATLAS_API_BASE_URL = os.getenv(
     "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
@@ -353,6 +350,9 @@ def validate_credentials():
 def main():
     """Main function with comprehensive error handling and user confirmation."""
     try:
+        # Load environment variables at runtime
+        load_dotenv()
+
         logger.info("Starting MongoDB Atlas Empty Projects Cleaner...")
 
         # Validate credentials first

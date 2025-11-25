@@ -49,9 +49,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("atlas_provisioner")
 
-# Load environment variables
-load_dotenv()
-
 # --- Configuration Constants ---
 ATLAS_API_BASE_URL = os.getenv(
     "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
@@ -730,11 +727,11 @@ class AtlasProvisioner:
 
 def validate_credentials():
     """Validate that all required environment variables are present."""
+    # Note: ATLAS_API_BASE_URL is not required as it has a default value
     required_vars = [
         "ATLAS_PUBLIC_KEY",
         "ATLAS_PRIVATE_KEY",
         "ATLAS_ORG_ID",
-        "ATLAS_API_BASE_URL",
     ]
     missing_vars = []
 
@@ -751,6 +748,9 @@ def validate_credentials():
 def main():
     """Main function with comprehensive error handling and user confirmation."""
     try:
+        # Load environment variables at runtime
+        load_dotenv()
+
         logger.info("Starting MongoDB Atlas Provisioner...")
 
         # Validate credentials first

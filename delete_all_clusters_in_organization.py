@@ -31,16 +31,14 @@ import requests
 from dotenv import load_dotenv
 from requests.auth import HTTPDigestAuth
 
-# Load environment variables
-load_dotenv()
-
 # --- Configuration Constants ---
+# These are set at runtime in main() after load_dotenv() is called
 ATLAS_API_BASE_URL = os.getenv(
     "ATLAS_API_BASE_URL", "https://cloud.mongodb.com/api/atlas/v2"
 )
-PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
-PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
-ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
+PUBLIC_KEY: Optional[str] = None
+PRIVATE_KEY: Optional[str] = None
+ORGANIZATION_ID: Optional[str] = None
 
 # Configure logging
 logging.basicConfig(
@@ -76,10 +74,6 @@ def validate_atlas_credentials():
         )
 
     logger.info("Atlas API credentials validated successfully")
-
-
-# Validate credentials after logger is configured
-validate_atlas_credentials()
 
 
 def make_atlas_api_request(
@@ -253,7 +247,17 @@ def delete_all_clusters_in_org(org_id: str) -> bool:
 
 def main():
     """Main function with comprehensive error handling."""
+    global PUBLIC_KEY, PRIVATE_KEY, ORGANIZATION_ID
     try:
+        # Load environment variables at runtime
+        load_dotenv()
+        PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
+        PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
+        ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
+
+        # Validate credentials
+        validate_atlas_credentials()
+
         logger.info("Starting MongoDB Atlas cluster deletion tool")
 
         # Confirm destructive operation
