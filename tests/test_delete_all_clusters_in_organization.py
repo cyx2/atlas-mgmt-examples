@@ -9,6 +9,7 @@ This module tests the cluster deletion functionality including:
 """
 
 import os
+import sys
 from unittest.mock import MagicMock, patch
 import pytest
 import requests
@@ -449,4 +450,46 @@ class TestMain:
                             with patch.object(module, "delete_all_clusters_in_org", side_effect=Exception("Unexpected")):
                                 result = module.main()
                                 assert result == 1
+
+
+class TestModuleInitialization:
+    """Regression tests that verify load_dotenv() is called at module level.
+
+    These tests ensure that load_dotenv() is called during module import,
+    not just in main(), preventing the authentication bug where environment
+    variables weren't loaded before module-level variables were set.
+    """
+
+    def test_load_dotenv_called_at_module_level(self):
+        """
+        Test that load_dotenv() is called at module level, not just in main().
+        This ensures environment variables are loaded before module-level variables are set.
+        """
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_public_key",
+            "ATLAS_PRIVATE_KEY": "test_private_key",
+            "ATLAS_ORG_ID": "test_org_id",
+        }, clear=True):
+            # Temporarily disable the autouse mock_load_dotenv fixture
+            # by patching dotenv.load_dotenv before module import
+            import importlib
+
+            if "delete_all_clusters_in_organization" in sys.modules:
+                del sys.modules["delete_all_clusters_in_organization"]
+
+            # Patch dotenv.load_dotenv BEFORE importing the module
+            # When the module does "from dotenv import load_dotenv", it will get our patched version
+            with patch("dotenv.load_dotenv", wraps=lambda: None) as mock_load:
+                # Import should trigger load_dotenv() at module level
+                import delete_all_clusters_in_organization as module
+
+                # Verify load_dotenv was called during import
+                assert (
+                    mock_load.called
+                ), "load_dotenv() should be called at module level during import"
+                
+                # Verify module-level variables are set from environment
+                assert module.PUBLIC_KEY == "test_public_key"
+                assert module.PRIVATE_KEY == "test_private_key"
+                assert module.ORGANIZATION_ID == "test_org_id"
 

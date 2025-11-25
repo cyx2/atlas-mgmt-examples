@@ -11,6 +11,7 @@ This module tests the project provisioning functionality including:
 
 import json
 import os
+import sys
 from http import HTTPStatus
 from unittest.mock import MagicMock, patch, mock_open
 import pytest
@@ -902,3 +903,51 @@ class TestMain:
                             # Should fail because no emails specified
                             assert result == 1
 
+
+
+
+class TestModuleInitialization:
+    """Regression tests that verify load_dotenv() is called at module level.
+
+    These tests ensure that load_dotenv() is called during module import,
+    not just in main(), preventing the authentication bug where environment
+    variables weren't loaded before classes tried to read them.
+    """
+
+    def test_load_dotenv_called_at_module_level(self, mock_response):
+        """
+        Test that load_dotenv() is called at module level, not just in main().
+        This ensures environment variables are loaded before classes try to read them.
+        """
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_public_key",
+            "ATLAS_PRIVATE_KEY": "test_private_key",
+            "ATLAS_ORG_ID": "test_org_id",
+        }, clear=True):
+            # Temporarily disable the autouse mock_load_dotenv fixture
+            # by patching dotenv.load_dotenv before module import
+            import importlib
+
+            if "provision_projects_for_users" in sys.modules:
+                del sys.modules["provision_projects_for_users"]
+
+            # Patch dotenv.load_dotenv BEFORE importing the module
+            # When the module does "from dotenv import load_dotenv", it will get our patched version
+            with patch("dotenv.load_dotenv", wraps=lambda: None) as mock_load:
+                # Import should trigger load_dotenv() at module level
+                from provision_projects_for_users import AtlasAPI
+
+                # Verify load_dotenv was called during import
+                assert (
+                    mock_load.called
+                ), "load_dotenv() should be called at module level during import"
+                
+                # Now instantiate - should work because env vars are in os.environ
+                with patch("requests.get") as mock_get:
+                    mock_get.return_value = mock_response(
+                        200, {"results": [{"id": "test_org_id"}]}
+                    )
+                    api = AtlasAPI()
+                    assert api.org_id == "test_org_id"
+                    assert api.public_key == "test_public_key"
+                    assert api.private_key == "test_private_key"
