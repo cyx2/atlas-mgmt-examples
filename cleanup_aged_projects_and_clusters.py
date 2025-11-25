@@ -2,9 +2,8 @@
 Cleanup Aged Projects and Clusters
 
 Automated cleanup of aged Atlas resources:
-- Projects older than 90 days: Remove all database users and Atlas users
+- Projects older than 90 days: Delete all group invitations, remove all database users and Atlas users
 - Projects older than 120 days: Delete all clusters
-- Delete ALL pending organization invitations when old projects are found
 
 Environment Variables:
     ATLAS_PUBLIC_KEY, ATLAS_PRIVATE_KEY, ATLAS_ORG_ID
@@ -101,10 +100,19 @@ def get_all_paginated_items(
         except ValueError:
             break
 
-        if not data or item_key not in data or not data[item_key]:
+        if not data:
             break
 
-        all_items.extend(data[item_key])
+        # Handle list response (non-paginated)
+        if isinstance(data, list):
+            all_items.extend(data)
+            break
+
+        # Handle dict response with results key (paginated)
+        if item_key in data and data[item_key]:
+            all_items.extend(data[item_key])
+        else:
+            break
 
         # Check for next page
         if not any(link.get("rel") == "next" for link in data.get("links", [])):
@@ -144,6 +152,14 @@ def get_atlas_clusters(project_id: str, auth: HTTPDigestAuth) -> List[Dict[str, 
     return get_all_paginated_items(url, auth)
 
 
+def get_atlas_group_invitations(
+    project_id: str, auth: HTTPDigestAuth
+) -> List[Dict[str, Any]]:
+    """Get all group (project) invitations."""
+    url = f"{ATLAS_API_BASE_URL}/groups/{project_id}/invites"
+    return get_all_paginated_items(url, auth)
+
+
 def delete_atlas_resource(
     resource_type: str,
     project_id: str,
@@ -174,82 +190,45 @@ def delete_atlas_resource(
     return success
 
 
-def get_atlas_org_invitations(
-    org_id: str, auth: HTTPDigestAuth
-) -> List[Dict[str, Any]]:
-    """Get all pending organization invitations."""
-    endpoints = [
-        f"{ATLAS_API_BASE_URL}/orgs/{org_id}/invites",
-        f"{ATLAS_API_BASE_URL}/orgs/{org_id}/invitations",
-    ]
-
-    for url in endpoints:
-        response = make_atlas_api_request("GET", url, auth)
-        if not response:
-            continue
-
-        try:
-            data = response.json()
-        except ValueError:
-            continue
-
-        # Handle different response structures
-        if isinstance(data, list):
-            invitations = data
-        elif isinstance(data, dict):
-            invitations = data.get("results", [])
-        else:
-            continue
-
-        logger.info(f"Found {len(invitations)} organization invitations")
-        return invitations
-
-    logger.warning("Could not fetch organization invitations")
-    return []
-
-
-def delete_atlas_org_invitation(
-    org_id: str, invitation_id: str, auth: HTTPDigestAuth
+def delete_atlas_group_invitation(
+    project_id: str, invitation_id: str, auth: HTTPDigestAuth
 ) -> bool:
-    """Delete organization invitation."""
-    endpoints = [
-        f"{ATLAS_API_BASE_URL}/orgs/{org_id}/invites/{invitation_id}",
-        f"{ATLAS_API_BASE_URL}/orgs/{org_id}/invitations/{invitation_id}",
-    ]
+    """Delete group (project) invitation."""
+    url = f"{ATLAS_API_BASE_URL}/groups/{project_id}/invites/{invitation_id}"
+    response = make_atlas_api_request("DELETE", url, auth)
 
-    for url in endpoints:
-        response = make_atlas_api_request("DELETE", url, auth)
-        if response and response.status_code in [200, 202, 204]:
-            logger.info(f"  Deleted invitation: {invitation_id}")
-            return True
+    if response and response.status_code in [200, 202, 204]:
+        logger.info(f"  Deleted group invitation: {invitation_id}")
+        return True
 
-    logger.error(f"  Failed to delete invitation: {invitation_id}")
+    logger.error(f"  Failed to delete group invitation: {invitation_id}")
     return False
 
 
-def delete_invitations_for_old_projects(
-    org_id: str,
-    org_invitations: List[Dict[str, Any]],
-    old_project_ids: set,
-    auth: HTTPDigestAuth,
+def delete_all_group_invitations(
+    project_id: str, project_name: str, auth: HTTPDigestAuth
 ) -> Tuple[int, int]:
-    """Delete ALL organization invitations when old projects are found."""
-    if not org_invitations or not old_project_ids:
+    """Delete all group (project) invitations."""
+    invitations = get_atlas_group_invitations(project_id, auth)
+
+    if not invitations:
         return 0, 0
 
-    logger.info(
-        f"Deleting ALL {len(org_invitations)} organization invitations due to old projects"
-    )
+    logger.info(f"Found {len(invitations)} group invitations for {project_name}")
 
     successful = failed = 0
-    for invitation in org_invitations:
+    for invitation in invitations:
         invitation_id = invitation.get("id")
-        if invitation_id and delete_atlas_org_invitation(org_id, invitation_id, auth):
+        if invitation_id and delete_atlas_group_invitation(
+            project_id, invitation_id, auth
+        ):
             successful += 1
         else:
             failed += 1
 
-    logger.info(f"Invitation cleanup: {successful} successful, {failed} failed")
+    logger.info(
+        f"Group invitation cleanup for {project_name}: {successful} successful, {failed} failed"
+    )
     return successful, failed
 
 
@@ -258,11 +237,11 @@ def show_warning_and_confirm(org_id: str) -> bool:
     print("⚠️  WARNING: This script will perform DESTRUCTIVE operations!")
     print(f"Organization ID: {org_id}")
     print(f"Projects older than {USER_DELETION_THRESHOLD} days:")
+    print("  - All group invitations deleted")
     print("  - All database users deleted")
     print("  - All Atlas users removed")
     print(f"Projects older than {CLUSTER_DELETION_THRESHOLD} days:")
     print("  - All clusters deleted")
-    print("  - ALL organization invitations deleted")
 
     confirm = input(
         f"\nType 'REAP PROJECTS OLDER THAN {USER_DELETION_THRESHOLD} DAYS' to confirm: "
@@ -274,6 +253,9 @@ def cleanup_project_resources(
     project_id: str, project_name: str, auth: HTTPDigestAuth
 ) -> None:
     """Clean up all resources in a project."""
+    # Delete all group invitations first
+    delete_all_group_invitations(project_id, project_name, auth)
+
     # Delete database users
     db_users = get_atlas_database_users(project_id, auth)
     for user in db_users:
@@ -326,8 +308,6 @@ def main():
             logger.warning("No projects found")
             return 1
 
-        org_invitations = get_atlas_org_invitations(org_id, auth)
-
         user_threshold = CURRENT_DATE_UTC - timedelta(days=USER_DELETION_THRESHOLD)
         cluster_threshold = CURRENT_DATE_UTC - timedelta(
             days=CLUSTER_DELETION_THRESHOLD
@@ -339,7 +319,6 @@ def main():
         )
 
         total_processed = total_cleaned = total_errors = 0
-        old_project_ids = set()
 
         for project in projects:
             project_id = project.get("id")
@@ -371,7 +350,6 @@ def main():
                     f"Cleaning up project {project_name} (older than {USER_DELETION_THRESHOLD} days)"
                 )
                 total_cleaned += 1
-                old_project_ids.add(project_id)
 
                 cleanup_project_resources(project_id, project_name, auth)
 
@@ -382,14 +360,6 @@ def main():
                     cleanup_project_clusters(project_id, project_name, auth)
             else:
                 logger.info(f"Skipping {project_name} (not old enough)")
-
-        # Delete organization invitations if old projects found
-        if old_project_ids:
-            successful_inv, failed_inv = delete_invitations_for_old_projects(
-                org_id, org_invitations, old_project_ids, auth
-            )
-        else:
-            logger.info("No old projects found, skipping invitation cleanup")
 
         logger.info(
             f"Completed: {total_processed} processed, {total_cleaned} cleaned, {total_errors} errors"
