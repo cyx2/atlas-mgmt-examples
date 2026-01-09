@@ -25,6 +25,7 @@ Note:
 import csv
 import logging
 import os
+import time
 from typing import List, Optional
 
 import requests
@@ -52,6 +53,8 @@ ATLAS_API_BASE_URL = os.getenv(
 PUBLIC_KEY = os.getenv("ATLAS_PUBLIC_KEY")
 PRIVATE_KEY = os.getenv("ATLAS_PRIVATE_KEY")
 ORGANIZATION_ID = os.getenv("ATLAS_ORG_ID")
+# Rate limit: 10 invitations per minute for the invite endpoint
+RATE_LIMIT_DELAY_SECONDS = float(os.getenv("RATE_LIMIT_DELAY_SECONDS", "6.0"))
 
 
 # Load email addresses from CSV file
@@ -129,7 +132,7 @@ def make_atlas_api_request(
     method: str, url: str, **kwargs
 ) -> Optional[requests.Response]:
     """
-    Make an Atlas API request with proper error handling.
+    Make an Atlas API request with proper error handling and rate limit retry logic.
 
     Args:
         method: HTTP method (GET, POST, DELETE, etc.)
@@ -139,13 +142,86 @@ def make_atlas_api_request(
     Returns:
         Response object if successful, None if failed
     """
-    try:
-        response = requests.request(method, url, timeout=30, **kwargs)
-        response.raise_for_status()
-        return response
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed: {method} {url} - {str(e)}")
-        return None
+    max_retries = 3
+    backoff_delays = [1, 2, 4]  # Exponential backoff delays in seconds
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.request(method, url, timeout=30, **kwargs)
+
+            # Handle 409 Conflict (invitation already exists) - return response for caller to handle
+            # Check this BEFORE raise_for_status() to avoid exception
+            if response.status_code == 409:
+                logger.debug(
+                    f"Detected 409 Conflict response for {method} {url}, returning response"
+                )
+                return response
+
+            # Handle rate limiting (429 Too Many Requests)
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    # Check for Retry-After header, otherwise use exponential backoff
+                    if "Retry-After" in response.headers:
+                        wait_time = int(response.headers.get("Retry-After"))
+                        logger.warning(
+                            f"Rate limit exceeded (429). Retry-After header indicates waiting {wait_time} seconds "
+                            f"(attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                    else:
+                        wait_time = backoff_delays[attempt]
+                        logger.warning(
+                            f"Rate limit exceeded (429). Retrying in {wait_time} seconds "
+                            f"(attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(
+                        f"Rate limit exceeded (429) after {max_retries + 1} attempts. "
+                        f"Request failed: {method} {url}"
+                    )
+                    return None
+
+            response.raise_for_status()
+            return response
+        except requests.exceptions.HTTPError as e:
+            # HTTPError has response attribute - check for 409 or 429
+            if hasattr(e, "response") and e.response is not None:
+                if e.response.status_code == 409:
+                    return e.response
+                elif e.response.status_code == 429:
+                    # Only retry on 429 errors
+                    if attempt < max_retries:
+                        wait_time = backoff_delays[attempt]
+                        logger.warning(
+                            f"Rate limit exceeded (429). Retrying in {wait_time} seconds "
+                            f"(attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                        time.sleep(wait_time)
+                        continue
+            logger.error(f"API request failed: {method} {url} - {str(e)}")
+            return None
+        except requests.exceptions.RequestException as e:
+            # Handle other request exceptions (connection errors, etc.)
+            # Check if exception has response attribute (some exceptions do)
+            if hasattr(e, "response") and e.response is not None:
+                if e.response.status_code == 409:
+                    return e.response
+                elif e.response.status_code == 429:
+                    # Only retry on 429 errors
+                    if attempt < max_retries:
+                        wait_time = backoff_delays[attempt]
+                        logger.warning(
+                            f"Rate limit exceeded (429). Retrying in {wait_time} seconds "
+                            f"(attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                        time.sleep(wait_time)
+                        continue
+
+            logger.error(f"API request failed: {method} {url} - {str(e)}")
+            return None
+
+    return None
 
 
 def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
@@ -194,12 +270,30 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
             "POST", url, json=payload, headers=headers, auth=auth
         )
 
-        if response and response.status_code in [200, 201]:
+        if response is None:
+            logger.error(f"Failed to invite {email} - API request returned None")
+            failed_invites += 1
+        elif response.status_code in [200, 201]:
             logger.info(f"Successfully invited {email} to the organization")
             successful_invites += 1
+        elif response.status_code == 409:
+            logger.warning(
+                f"Invitation already exists for {email} (409 Conflict). Skipping."
+            )
+            successful_invites += 1  # Treat as success since invitation already exists
         else:
-            logger.error(f"Failed to invite {email}")
+            logger.error(
+                f"Failed to invite {email} - Unexpected status code: {response.status_code}"
+            )
             failed_invites += 1
+
+        # Add delay between requests to respect rate limits (10 invitations per minute)
+        # Skip delay after the last email to avoid unnecessary wait
+        if email != emails[-1]:
+            logger.debug(
+                f"Waiting {RATE_LIMIT_DELAY_SECONDS} seconds before next invitation..."
+            )
+            time.sleep(RATE_LIMIT_DELAY_SECONDS)
 
     logger.info(
         f"Invitation process completed. Successful: {successful_invites}, Failed: {failed_invites}"
