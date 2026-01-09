@@ -393,9 +393,10 @@ class TestMain:
                 importlib.reload(invite_users_to_organization)
                 
                 with patch.object(invite_users_to_organization, "EMAILS_TO_PROVISION", ["user@example.com"]):
-                    with patch("builtins.input", return_value="n"):
-                        result = invite_users_to_organization.main()
-                        assert result == 0
+                    with patch("sys.argv", ["invite_users_to_organization.py"]):
+                        with patch("builtins.input", return_value="n"):
+                            result = invite_users_to_organization.main()
+                            assert result == 0
 
     def test_main_confirmed_success(self, mock_response):
         """Test main function with successful execution."""
@@ -410,12 +411,36 @@ class TestMain:
                 importlib.reload(invite_users_to_organization)
                 
                 with patch.object(invite_users_to_organization, "EMAILS_TO_PROVISION", ["user@example.com"]):
-                    with patch("builtins.input", return_value="y"):
-                        with patch("requests.request") as mock_request:
-                            mock_request.return_value = mock_response(200)
-                            
-                            result = invite_users_to_organization.main()
-                            assert result == 0
+                    with patch("sys.argv", ["invite_users_to_organization.py"]):
+                        with patch("builtins.input", return_value="y"):
+                            with patch("requests.request") as mock_request:
+                                mock_request.return_value = mock_response(200)
+                                
+                                result = invite_users_to_organization.main()
+                                assert result == 0
+
+    def test_main_no_confirm_flag(self, mock_response):
+        """Test main function with --no-confirm flag skips confirmation."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch.object(invite_users_to_organization, "EMAILS_TO_PROVISION", ["user@example.com"]):
+                    with patch("sys.argv", ["invite_users_to_organization.py", "--no-confirm"]):
+                        with patch("builtins.input") as mock_input:
+                            with patch("requests.request") as mock_request:
+                                mock_request.return_value = mock_response(200)
+                                
+                                result = invite_users_to_organization.main()
+                                assert result == 0
+                                # Verify input was never called when --no-confirm is used
+                                mock_input.assert_not_called()
 
     def test_main_keyboard_interrupt(self):
         """Test main function handles KeyboardInterrupt."""
@@ -429,9 +454,10 @@ class TestMain:
         # Mock load_emails_from_csv to return test emails and load_dotenv to do nothing
         with patch.object(invite_users_to_organization, "load_emails_from_csv", return_value=["user@example.com"]):
             with patch.object(invite_users_to_organization, "load_dotenv"):
-                with patch("builtins.input", side_effect=KeyboardInterrupt):
-                    result = invite_users_to_organization.main()
-                    assert result == 1
+                with patch("sys.argv", ["invite_users_to_organization.py"]):
+                    with patch("builtins.input", side_effect=KeyboardInterrupt):
+                        result = invite_users_to_organization.main()
+                        assert result == 1
 
     def test_main_unexpected_error(self, mock_response):
         """Test main function handles unexpected errors."""
@@ -445,14 +471,15 @@ class TestMain:
         # Mock load_emails_from_csv to return test emails and load_dotenv to do nothing
         with patch.object(invite_users_to_organization, "load_emails_from_csv", return_value=["user@example.com"]):
             with patch.object(invite_users_to_organization, "load_dotenv"):
-                with patch("builtins.input", return_value="y"):
-                    with patch.object(
-                        invite_users_to_organization,
-                        "invite_users_to_org",
-                        side_effect=Exception("Unexpected")
-                    ):
-                        result = invite_users_to_organization.main()
-                        assert result == 1
+                with patch("sys.argv", ["invite_users_to_organization.py"]):
+                    with patch("builtins.input", return_value="y"):
+                        with patch.object(
+                            invite_users_to_organization,
+                            "invite_users_to_org",
+                            side_effect=Exception("Unexpected")
+                        ):
+                            result = invite_users_to_organization.main()
+                            assert result == 1
 
 
 class TestModuleInitialization:

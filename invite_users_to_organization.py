@@ -16,12 +16,14 @@ Environment Variables:
     ATLAS_API_BASE_URL: (Optional) Atlas API Base URL
 
 Usage:
-    python invite_users_to_organization.py
+    python invite_users_to_organization.py [--no-confirm]
 
 Note:
     Modify EMAILS_TO_PROVISION list in the script to specify target users.
+    Use --no-confirm to skip the confirmation prompt.
 """
 
+import argparse
 import csv
 import logging
 import os
@@ -416,6 +418,17 @@ def main():
             print("No emails configured in EMAILS_TO_PROVISION list.")
             return 0
 
+        # Parse command line arguments
+        parser = argparse.ArgumentParser(
+            description="Invite users to MongoDB Atlas organization"
+        )
+        parser.add_argument(
+            "--no-confirm",
+            action="store_true",
+            help="Skip confirmation prompt and proceed with invitations",
+        )
+        args = parser.parse_args()
+
         print(
             f"About to invite {len(EMAILS_TO_PROVISION)} users to organization {ORGANIZATION_ID}"
         )
@@ -423,11 +436,15 @@ def main():
         for email in EMAILS_TO_PROVISION:
             print(f"  - {email}")
 
-        confirm = input("\nProceed with invitations? (y/N): ").lower().strip()
-        if confirm != "y":
-            logger.info("Operation cancelled by user")
-            print("Operation cancelled.")
-            return 0
+        if args.no_confirm:
+            print("\n⚠️  Running without confirmation (--no-confirm flag set)")
+            logger.info("Running without confirmation (--no-confirm flag set)")
+        else:
+            confirm = input("\nProceed with invitations? (y/N): ").lower().strip()
+            if confirm != "y":
+                logger.info("Operation cancelled by user")
+                print("Operation cancelled.")
+                return 0
 
         success = invite_users_to_org(ORGANIZATION_ID, EMAILS_TO_PROVISION)
 
