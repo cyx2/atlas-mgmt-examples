@@ -224,6 +224,81 @@ def make_atlas_api_request(
     return None
 
 
+def get_existing_org_users(org_id: str) -> set:
+    """
+    Get all existing users in an Atlas organization (including pending invitations).
+
+    Args:
+        org_id: The ID of the Atlas organization
+
+    Returns:
+        Set of email addresses (usernames) of existing users
+    """
+    if not org_id:
+        logger.warning("Organization ID is required to fetch existing users")
+        return set()
+
+    url = f"{ATLAS_API_BASE_URL}/orgs/{org_id}/users"
+    headers = {
+        "Accept": "application/vnd.atlas.2025-02-19+json",
+    }
+    auth = HTTPDigestAuth(PUBLIC_KEY, PRIVATE_KEY)
+
+    existing_users = set()
+    page = 1
+    max_pages = 100  # Safety limit
+
+    while page <= max_pages:
+        # Add pagination parameters
+        params = {"pageNum": page, "itemsPerPage": 500}
+        response = make_atlas_api_request(
+            "GET", url, headers=headers, auth=auth, params=params
+        )
+
+        if not response:
+            if page == 1:
+                # If first page fails, log warning but return empty set (fail-safe)
+                logger.warning(
+                    "Failed to fetch existing users from organization. "
+                    "Will proceed with invitations (may result in duplicates)."
+                )
+            break
+
+        try:
+            data = response.json()
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse users response: {str(e)}")
+            break
+
+        # Handle list response (non-paginated)
+        if isinstance(data, list):
+            for user in data:
+                username = user.get("username")
+                if username:
+                    existing_users.add(username.lower())  # Case-insensitive comparison
+            break
+
+        # Handle dict response with results key (paginated)
+        if "results" in data and data["results"]:
+            for user in data["results"]:
+                username = user.get("username")
+                if username:
+                    existing_users.add(username.lower())  # Case-insensitive comparison
+        else:
+            break
+
+        # Check for next page
+        links = data.get("links", [])
+        has_next = any(link.get("rel") == "next" for link in links)
+        if not has_next:
+            break
+
+        page += 1
+
+    logger.info(f"Found {len(existing_users)} existing users in organization")
+    return existing_users
+
+
 def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
     """
     Invite users to an Atlas organization.
@@ -245,6 +320,9 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
 
     logger.info(f"Starting invitation process for {len(emails)} users")
 
+    # Fetch existing users once at the start
+    existing_users = get_existing_org_users(org_id)
+
     url = f"{ATLAS_API_BASE_URL}/orgs/{org_id}/invites"
     headers = {
         "Content-Type": "application/json",
@@ -254,12 +332,22 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
 
     successful_invites = 0
     failed_invites = 0
+    skipped_existing = 0
 
     for email in emails:
         # Validate email format
         if not validate_email(email):
             logger.error(f"Invalid email format: {email}")
             failed_invites += 1
+            continue
+
+        # Check if user already exists (case-insensitive comparison)
+        if email.lower() in existing_users:
+            logger.info(
+                f"User {email} already exists in the organization. Skipping invitation."
+            )
+            successful_invites += 1  # Treat as success since user already exists
+            skipped_existing += 1
             continue
 
         logger.info(f"Inviting user: {email}")
@@ -296,7 +384,8 @@ def invite_users_to_org(org_id: str, emails: List[str]) -> bool:
             time.sleep(RATE_LIMIT_DELAY_SECONDS)
 
     logger.info(
-        f"Invitation process completed. Successful: {successful_invites}, Failed: {failed_invites}"
+        f"Invitation process completed. Successful: {successful_invites}, "
+        f"Failed: {failed_invites}, Skipped (already exists): {skipped_existing}"
     )
     return failed_invites == 0
 

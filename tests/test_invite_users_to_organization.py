@@ -8,6 +8,7 @@ This module tests the user invitation functionality including:
 - User invitation process
 """
 
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch, mock_open
@@ -337,20 +338,27 @@ class TestInviteUsersToOrg:
                 importlib.reload(invite_users_to_organization)
                 
                 with patch("requests.request") as mock_request:
-                    mock_request.return_value = mock_response(201)
-                    
-                    emails = [
-                        "user1@example.com",
-                        "user2@example.com",
-                        "user3@example.com",
-                    ]
-                    
-                    result = invite_users_to_organization.invite_users_to_org(
-                        "org123", emails
-                    )
-                    
-                    assert result is True
-                    assert mock_request.call_count == 3
+                    # Mock get_existing_org_users to return empty set (no existing users)
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=set()
+                    ):
+                        mock_request.return_value = mock_response(201)
+                        
+                        emails = [
+                            "user1@example.com",
+                            "user2@example.com",
+                            "user3@example.com",
+                        ]
+                        
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", emails
+                        )
+                        
+                        assert result is True
+                        # 3 invites (get_existing_org_users is mocked)
+                        assert mock_request.call_count == 3
 
 
 class TestMain:
@@ -789,15 +797,22 @@ class Test409ConflictHandling:
                 importlib.reload(invite_users_to_organization)
                 
                 with patch("requests.request") as mock_request:
-                    mock_request.return_value = mock_response(409)
-                    
-                    result = invite_users_to_organization.invite_users_to_org(
-                        "org123", ["user@example.com"]
-                    )
-                    
-                    # Should be treated as success
-                    assert result is True
-                    assert mock_request.call_count == 1
+                    # Mock get_existing_org_users to return empty set
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=set()
+                    ):
+                        mock_request.return_value = mock_response(409)
+                        
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", ["user@example.com"]
+                        )
+                        
+                        # Should be treated as success
+                        assert result is True
+                        # 1 invite (get_existing_org_users is mocked)
+                        assert mock_request.call_count == 1
 
     def test_409_conflict_in_exception_handler(self, mock_response):
         """Test that 409 Conflict in exception handler is handled correctly."""
@@ -842,19 +857,26 @@ class Test409ConflictHandling:
                 importlib.reload(invite_users_to_organization)
                 
                 with patch("requests.request") as mock_request:
-                    # First returns 409, second succeeds
-                    mock_request.side_effect = [
-                        mock_response(409),
-                        mock_response(200),
-                    ]
-                    
-                    result = invite_users_to_organization.invite_users_to_org(
-                        "org123", ["existing@example.com", "new@example.com"]
-                    )
-                    
-                    # Both should be treated as success
-                    assert result is True
-                    assert mock_request.call_count == 2
+                    # Mock get_existing_org_users to return empty set
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=set()
+                    ):
+                        # First returns 409, second succeeds
+                        mock_request.side_effect = [
+                            mock_response(409),
+                            mock_response(200),
+                        ]
+                        
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", ["existing@example.com", "new@example.com"]
+                        )
+                        
+                        # Both should be treated as success
+                        assert result is True
+                        # 2 invites (get_existing_org_users is mocked)
+                        assert mock_request.call_count == 2
 
     def test_409_conflict_logs_warning_not_error(self, mock_response, caplog):
         """Test that 409 Conflict logs a warning, not an error."""
@@ -881,4 +903,293 @@ class Test409ConflictHandling:
                     
                     assert any("already exists" in r.message.lower() for r in warning_logs)
                     assert not any("failed to invite" in r.message.lower() for r in error_logs)
+
+
+class TestGetExistingOrgUsers:
+    """Tests for get_existing_org_users function."""
+
+    def test_get_existing_users_success(self, mock_response):
+        """Test successfully fetching existing users."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # Mock response with users
+                    users_data = {
+                        "results": [
+                            {"username": "user1@example.com"},
+                            {"username": "user2@example.com"},
+                        ]
+                    }
+                    mock_request.return_value = mock_response(200, users_data)
+                    
+                    result = invite_users_to_organization.get_existing_org_users("org123")
+                    
+                    assert isinstance(result, set)
+                    assert len(result) == 2
+                    assert "user1@example.com" in result
+                    assert "user2@example.com" in result
+
+    def test_get_existing_users_case_insensitive(self, mock_response):
+        """Test that email comparison is case-insensitive."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    users_data = {
+                        "results": [
+                            {"username": "User1@Example.com"},
+                        ]
+                    }
+                    mock_request.return_value = mock_response(200, users_data)
+                    
+                    result = invite_users_to_organization.get_existing_org_users("org123")
+                    
+                    # Should store lowercase
+                    assert "user1@example.com" in result
+                    assert "User1@Example.com" not in result
+
+    def test_get_existing_users_pagination(self, mock_response):
+        """Test handling paginated responses."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # First page
+                    page1_data = {
+                        "results": [{"username": "user1@example.com"}],
+                        "links": [{"rel": "next", "href": "http://next"}]
+                    }
+                    # Second page
+                    page2_data = {
+                        "results": [{"username": "user2@example.com"}],
+                        "links": []
+                    }
+                    mock_request.side_effect = [
+                        mock_response(200, page1_data),
+                        mock_response(200, page2_data),
+                    ]
+                    
+                    result = invite_users_to_organization.get_existing_org_users("org123")
+                    
+                    assert len(result) == 2
+                    assert "user1@example.com" in result
+                    assert "user2@example.com" in result
+                    assert mock_request.call_count == 2
+
+    def test_get_existing_users_api_failure(self, mock_response):
+        """Test graceful handling of API failure."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    mock_request.side_effect = requests.exceptions.RequestException("Error")
+                    
+                    result = invite_users_to_organization.get_existing_org_users("org123")
+                    
+                    # Should return empty set on failure (fail-safe)
+                    assert isinstance(result, set)
+                    assert len(result) == 0
+
+    def test_get_existing_users_no_org_id(self):
+        """Test handling of missing org ID."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                result = invite_users_to_organization.get_existing_org_users("")
+                
+                assert isinstance(result, set)
+                assert len(result) == 0
+
+    def test_get_existing_users_list_response(self, mock_response):
+        """Test handling of list response (non-paginated)."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # Some APIs return list directly
+                    users_list = [
+                        {"username": "user1@example.com"},
+                        {"username": "user2@example.com"},
+                    ]
+                    mock_response_obj = mock_response(200, users_list)
+                    # Mock json() to return list directly
+                    mock_response_obj.json.return_value = users_list
+                    mock_request.return_value = mock_response_obj
+                    
+                    result = invite_users_to_organization.get_existing_org_users("org123")
+                    
+                    assert len(result) == 2
+                    assert "user1@example.com" in result
+                    assert "user2@example.com" in result
+
+
+class TestSkipExistingUsers:
+    """Tests for skipping existing users in invitation flow."""
+
+    def test_skip_existing_user(self, mock_response):
+        """Test that existing users are skipped."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # Mock get_existing_org_users to return existing user
+                    existing_users = {"existing@example.com"}
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=existing_users
+                    ):
+                        # Mock successful invite response for new user
+                        mock_request.return_value = mock_response(200)
+                        
+                        # Should not make invite request for existing user
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", ["existing@example.com", "new@example.com"]
+                        )
+                        
+                        # Should only invite the new user (not the existing one)
+                        # mock_request is called once for the invite (get_existing_org_users is mocked)
+                        assert mock_request.call_count == 1
+                        assert result is True
+
+    def test_skip_existing_user_case_insensitive(self, mock_response):
+        """Test that existing user check is case-insensitive."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # Existing user stored as lowercase
+                    existing_users = {"user@example.com"}
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=existing_users
+                    ):
+                        # Try to invite with different case
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", ["User@Example.com"]
+                        )
+                        
+                        # Should skip (case-insensitive match)
+                        assert mock_request.call_count == 0
+                        assert result is True
+
+    def test_skip_existing_user_logs_info(self, mock_response, caplog):
+        """Test that skipping existing user logs appropriate message."""
+        with caplog.at_level(logging.INFO):
+            with patch.dict(os.environ, {
+                "ATLAS_PUBLIC_KEY": "test_key",
+                "ATLAS_PRIVATE_KEY": "test_key",
+                "ATLAS_ORG_ID": "test_org"
+            }):
+                with patch("builtins.open", mock_open(read_data="")):
+                    import importlib
+                    import invite_users_to_organization
+                    importlib.reload(invite_users_to_organization)
+                    
+                    with patch("requests.request") as mock_request:
+                        existing_users = {"existing@example.com"}
+                        with patch.object(
+                            invite_users_to_organization,
+                            "get_existing_org_users",
+                            return_value=existing_users
+                        ):
+                            invite_users_to_organization.invite_users_to_org(
+                                "org123", ["existing@example.com"]
+                            )
+                            
+                            # Check that info message was logged
+                            all_logs = [r for r in caplog.records]
+                            # Check for the skip message in any log level
+                            skip_messages = [
+                                r for r in all_logs 
+                                if "already exists" in r.message.lower() or "skipping" in r.message.lower()
+                            ]
+                            assert len(skip_messages) > 0, f"No skip message found. All logs: {[(r.levelname, r.message) for r in all_logs]}"
+
+    def test_continue_on_get_users_failure(self, mock_response):
+        """Test that invitation continues if fetching existing users fails."""
+        with patch.dict(os.environ, {
+            "ATLAS_PUBLIC_KEY": "test_key",
+            "ATLAS_PRIVATE_KEY": "test_key",
+            "ATLAS_ORG_ID": "test_org"
+        }):
+            with patch("builtins.open", mock_open(read_data="")):
+                import importlib
+                import invite_users_to_organization
+                importlib.reload(invite_users_to_organization)
+                
+                with patch("requests.request") as mock_request:
+                    # Mock get_existing_org_users to fail
+                    with patch.object(
+                        invite_users_to_organization,
+                        "get_existing_org_users",
+                        return_value=set()  # Empty set on failure
+                    ):
+                        # Should still proceed with invitation
+                        mock_request.return_value = mock_response(200)
+                        result = invite_users_to_organization.invite_users_to_org(
+                            "org123", ["user@example.com"]
+                        )
+                        
+                        # Should have attempted invitation
+                        assert mock_request.call_count >= 1
+                        assert result is True
 
