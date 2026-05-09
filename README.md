@@ -36,6 +36,11 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 | `invite_users_to_organization.py` | User management | Bulk user invitations with role assignments |
 | `cleanup_aged_projects_and_clusters.py` | Legacy cleanup | Remove users and group invitations from old projects (90+ days), cluster deletion (120+ days) |
 
+### Backup & Restore
+| Script | Purpose | Key Features |
+|--------|---------|-------------|
+| `test_snapshot_restore_for_project.py` | Backup restore verification | For each cluster in a project, creates a duplicate target and restores the latest snapshot into it; warns on unsupported tiers (M0/Flex/Serverless) with tier-specific context; handles IDLE/restore timeouts with automatic retry after deleting the stuck target |
+
 ## Detailed Script Information
 
 ### provision_projects_for_users.py
@@ -71,6 +76,18 @@ A collection of Python scripts for managing MongoDB Atlas organizations, project
 **Purpose:** Pause all clusters across an organization
 - **Usage:** `python pause_all_clusters_in_organization.py`
 - **Features:** Organization-wide cluster pausing, cost management, temporary environment shutdown
+
+### test_snapshot_restore_for_project.py
+**Purpose:** Exercise the Atlas snapshot/restore path for every cluster in a project, to verify backups are actually restorable
+- **Usage:** `python test_snapshot_restore_for_project.py --project-id <PROJECT_ID> [--cleanup] [--max-retries N]`
+- **Behavior:** For each source cluster:
+  1. Checks that backups are enabled (warns with tier-specific reason if not — e.g., "M0 free tier does not support Cloud Backup", Flex uses its own separate backup system, Serverless is deprecated)
+  2. Verifies the latest snapshot's major version matches the cluster's (warns on mismatch since `INVALID_RESTORE_TO_TARGET` would otherwise block the restore)
+  3. Creates a duplicate target cluster named `{source}-{timestamp}-backup-test-job` with the same provider, region, tier, MongoDB major version, and release track (CONTINUOUS is preserved so MongoDB 8.x minor versions provision correctly)
+  4. Waits for the target to reach IDLE, starts an automated restore job, polls until complete
+- **Batched phases:** all targets are created, waited, restored, and polled in parallel per phase — a slow cluster doesn't block the others
+- **Timeout recovery:** if a cluster doesn't become IDLE or a restore doesn't finish before the built-in timeouts (1h and 4h respectively), the stuck target is deleted and the pipeline retries from the create phase up to `--max-retries` times (default 1)
+- **Never touches source clusters:** only the created `*-backup-test-job` targets are modified or deleted
 
 ## Prerequisites
 

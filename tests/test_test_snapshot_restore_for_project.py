@@ -40,7 +40,7 @@ def _mock_resp(status_code=200, json_data=None, raise_error=False):
     return resp
 
 
-def _cluster(name="Cluster0", backup_enabled=True, extra=None):
+def _cluster(name="Cluster0", backup_enabled=True, instance_size="M10", extra=None):
     body = {
         "name": name,
         "backupEnabled": backup_enabled,
@@ -51,6 +51,7 @@ def _cluster(name="Cluster0", backup_enabled=True, extra=None):
         "stateName": "IDLE",
         "mongoDBVersion": "7.0.12",
         "mongoDBMajorVersion": "8.3",
+        "versionReleaseSystem": "CONTINUOUS",
         "connectionStrings": {"standard": "mongodb://x"},
         "paused": False,
         "links": [{"rel": "self", "href": "..."}],
@@ -63,6 +64,7 @@ def _cluster(name="Cluster0", backup_enabled=True, extra=None):
                         "providerName": "AWS",
                         "regionName": "US_EAST_1",
                         "priority": 7,
+                        "electableSpecs": {"instanceSize": instance_size, "nodeCount": 3},
                     }
                 ],
             }
@@ -98,42 +100,56 @@ class TestValidateAtlasCredentials:
 
 
 class TestBuildTargetClusterName:
-    def test_format_is_source_then_marker_then_timestamp(self):
+    def test_format_is_source_timestamp_marker(self):
         m = _load_module()
-        name = m.build_target_cluster_name("Cluster0", "2605091017")
-        assert name == "Cluster0-backup-test-job-2605091017"
+        name = m.build_target_cluster_name("Cluster0", "260509143700")
+        assert name == "Cluster0-260509143700-backup-test-job"
 
     def test_first_23_chars_distinguish_similar_sources(self):
         """Regression: Atlas rejects two clusters that share the first 23 chars."""
         m = _load_module()
-        n1 = m.build_target_cluster_name("Cluster0", "2605091017")
-        n2 = m.build_target_cluster_name("Cluster3", "2605091017")
-        n3 = m.build_target_cluster_name("Cluster5", "2605091017")
+        n1 = m.build_target_cluster_name("Cluster0", "260509143700")
+        n2 = m.build_target_cluster_name("Cluster3", "260509143700")
+        n3 = m.build_target_cluster_name("Cluster5", "260509143700")
         assert len({n1[:23], n2[:23], n3[:23]}) == 3
+
+    def test_first_23_chars_distinguish_same_source_across_runs(self):
+        """Regression: repeat runs against the same source cluster must not
+        collide with leftover target clusters from earlier runs. The timestamp
+        must appear within the first 23 characters for this to hold."""
+        m = _load_module()
+        n1 = m.build_target_cluster_name("Cluster0", "260509143700")
+        n2 = m.build_target_cluster_name("Cluster0", "260509143800")
+        assert n1[:23] != n2[:23]
 
     def test_truncates_to_64_chars(self):
         m = _load_module()
         long_src = "a" * 80
-        name = m.build_target_cluster_name(long_src, "2605091017")
+        name = m.build_target_cluster_name(long_src, "260509143700")
         assert len(name) == 64
-        assert name.endswith("-backup-test-job-2605091017")
+        assert name.endswith("-260509143700-backup-test-job")
 
     def test_does_not_end_with_dash_after_truncation(self):
         """If truncation leaves a trailing dash on the source, strip it so the
         marker boundary isn't '--'."""
         m = _load_module()
-        # Construct a source where the truncation boundary lands on '-'
-        src = "a" * 35 + "-" + "b" * 20
-        name = m.build_target_cluster_name(src, "2605091017")
+        src = "a" * 22 + "-" + "b" * 40
+        name = m.build_target_cluster_name(src, "260509143700")
         assert "--" not in name
 
 
 class TestIsBackupTestCluster:
-    def test_matches_new_format(self):
+    def test_matches_current_format(self):
+        m = _load_module()
+        assert m.is_backup_test_cluster("Cluster0-260509143700-backup-test-job")
+
+    def test_matches_legacy_suffix_format(self):
+        """Older runs produced names like 'Cluster0-backup-test-job-2605091017'."""
         m = _load_module()
         assert m.is_backup_test_cluster("Cluster0-backup-test-job-2605091017")
 
     def test_matches_legacy_prefix_format(self):
+        """The earliest runs produced names like 'backup-test-job-Cluster0'."""
         m = _load_module()
         assert m.is_backup_test_cluster("backup-test-job-Cluster0")
 
@@ -155,12 +171,27 @@ class TestBuildTargetClusterBody:
             "createDate",
             "stateName",
             "mongoDBVersion",
-            "mongoDBMajorVersion",
             "connectionStrings",
             "paused",
             "links",
         ):
             assert forbidden not in body
+
+    def test_preserves_mongodb_major_version(self):
+        """Regression: target must match snapshot's major version or restore
+        fails with INVALID_RESTORE_TO_TARGET. mongoDBMajorVersion must be kept
+        even though some versions will be rejected at create time."""
+        m = _load_module()
+        body = m.build_target_cluster_body(_cluster("src"), "target")
+        assert body["mongoDBMajorVersion"] == "8.3"
+
+    def test_preserves_version_release_system(self):
+        """Regression: minor versions (8.1/8.2/8.3) live on the CONTINUOUS
+        track. Without this field Atlas defaults to LTS and rejects them with
+        MONGODB_MAJOR_VERSION_INVALID."""
+        m = _load_module()
+        body = m.build_target_cluster_body(_cluster("src"), "target")
+        assert body["versionReleaseSystem"] == "CONTINUOUS"
 
     def test_strips_replication_spec_ids(self):
         m = _load_module()
@@ -174,6 +205,85 @@ class TestBuildTargetClusterBody:
         m.build_target_cluster_body(src, "target")
         assert src["id"] == "srv-id"
         assert src["replicationSpecs"][0]["id"] == "rs-id"
+
+
+class TestClusterInstanceSize:
+    def test_reads_electable_specs(self):
+        m = _load_module()
+        assert m.cluster_instance_size(_cluster(instance_size="M30")) == "M30"
+
+    def test_reads_read_only_specs_when_electable_missing(self):
+        m = _load_module()
+        cluster = {
+            "replicationSpecs": [
+                {"regionConfigs": [{"readOnlySpecs": {"instanceSize": "M20"}}]}
+            ]
+        }
+        assert m.cluster_instance_size(cluster) == "M20"
+
+    def test_returns_none_when_missing(self):
+        m = _load_module()
+        assert m.cluster_instance_size({}) is None
+        assert m.cluster_instance_size({"replicationSpecs": []}) is None
+        assert m.cluster_instance_size(
+            {"replicationSpecs": [{"regionConfigs": [{}]}]}
+        ) is None
+
+
+class TestExplainNoBackups:
+    def test_m0_free_tier(self):
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="M0"))
+        assert "M0" in msg and "free" in msg.lower()
+
+    def test_shared_tier_m2(self):
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="M2"))
+        assert "M2" in msg and "shared" in msg.lower()
+
+    def test_shared_tier_m5(self):
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="M5"))
+        assert "M5" in msg
+
+    def test_flex_tier(self):
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="FLEX"))
+        assert "Flex" in msg
+
+    def test_serverless(self):
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="SERVERLESS"))
+        assert "Serverless" in msg
+
+    def test_m10_supports_but_disabled(self):
+        """M10+ can have backups but the user may have turned them off."""
+        m = _load_module()
+        msg = m.explain_no_backups(_cluster(instance_size="M10", backup_enabled=False))
+        assert "M10" in msg
+        assert "disabled" in msg.lower() or "backupEnabled" in msg
+
+    def test_unknown_tier(self):
+        m = _load_module()
+        msg = m.explain_no_backups({})
+        assert "could not determine" in msg.lower() or "tier" in msg.lower()
+
+
+class TestSnapshotMajorVersion:
+    def test_extracts_from_mongod_version(self):
+        m = _load_module()
+        assert m.snapshot_major_version({"mongodVersion": "8.0.5"}) == "8.0"
+        assert m.snapshot_major_version({"mongodVersion": "7.0.12"}) == "7.0"
+
+    def test_falls_back_to_mongodb_version(self):
+        m = _load_module()
+        assert m.snapshot_major_version({"mongoDBVersion": "7.0.12"}) == "7.0"
+
+    def test_returns_none_on_missing_or_malformed(self):
+        m = _load_module()
+        assert m.snapshot_major_version({}) is None
+        assert m.snapshot_major_version({"mongodVersion": ""}) is None
+        assert m.snapshot_major_version({"mongodVersion": "8"}) is None
 
 
 class TestRestoreJobStatusHelpers:
@@ -255,6 +365,19 @@ class TestRun:
         assert rc == 0  # warnings don't flip exit code
         assert mock_req.call_count == 1
 
+    def test_backups_disabled_warning_includes_tier_context(self):
+        """Regression: the warning should explain *why* backups are off so the
+        user can act (upgrade tier vs. flip backupEnabled)."""
+        m = _load_module()
+        clusters = [_cluster("FreeCluster", backup_enabled=False, instance_size="M0")]
+        with patch("requests.request") as mock_req:
+            mock_req.return_value = _mock_resp(200, _paginated(clusters))
+            with patch.object(m.logger, "warning") as mock_warn:
+                with self._patch_sleep(m):
+                    m.run("proj", cleanup=False)
+        logged = " ".join(c.args[0] for c in mock_warn.call_args_list)
+        assert "M0" in logged
+
     def test_warning_when_no_snapshots_available(self):
         m = _load_module()
         clusters = [_cluster("ClusterA", backup_enabled=True)]
@@ -267,6 +390,24 @@ class TestRun:
                 rc = m.run("proj", cleanup=False)
         assert rc == 0
         # 1 list-clusters + 1 list-snapshots, nothing else.
+        assert mock_req.call_count == 2
+
+    def test_warning_when_snapshot_version_mismatches_cluster(self):
+        """Regression: Atlas rejects restore across major versions
+        (INVALID_RESTORE_TO_TARGET). We should flag this before create."""
+        m = _load_module()
+        cluster = _cluster("ClusterA", backup_enabled=True)
+        cluster["mongoDBMajorVersion"] = "8.0"
+        snapshot = {"id": "snap-1", "mongodVersion": "7.0.12"}
+        with patch("requests.request") as mock_req:
+            mock_req.side_effect = [
+                _mock_resp(200, _paginated([cluster])),
+                _mock_resp(200, _paginated([snapshot])),
+            ]
+            with self._patch_sleep(m):
+                rc = m.run("proj", cleanup=False)
+        assert rc == 0  # warnings don't flip exit code
+        # No create or restore calls should have been issued.
         assert mock_req.call_count == 2
 
     def test_happy_path_success(self):
@@ -388,6 +529,7 @@ class TestRun:
             _cluster("ClusterA", backup_enabled=False),
             _cluster("backup-test-job-ClusterA", backup_enabled=True),
             _cluster("ClusterA-backup-test-job-2601010000", backup_enabled=True),
+            _cluster("ClusterA-260101000000-backup-test-job", backup_enabled=True),
         ]
         with patch("requests.request") as mock_req:
             mock_req.return_value = _mock_resp(200, _paginated(clusters))
@@ -397,6 +539,189 @@ class TestRun:
         # warning only, no extra API calls beyond the list.
         assert rc == 0
         assert mock_req.call_count == 1
+
+
+class TestRecoverTimedOut:
+    def test_retry_resets_item_and_deletes_target(self):
+        """When retries remain, the stuck cluster is deleted and the item is
+        re-queued for another create attempt."""
+        m = _load_module()
+        item = {
+            "source_name": "src",
+            "target_name": "src-target",
+            "target_created": True,
+            "restore_job_id": "job-1",
+            "status": "creating",
+            "message": "",
+            "retries_remaining": 1,
+        }
+        with patch.object(m, "delete_cluster", return_value=True) as mock_del:
+            m.recover_timed_out([item], "timeout", 1, "proj", None, {})
+        mock_del.assert_called_once_with("proj", "src-target", None, {})
+        assert item["status"] == "pending_create"
+        assert item["retries_remaining"] == 0
+        assert item["target_created"] is False
+        assert item["restore_job_id"] is None
+
+    def test_out_of_retries_marks_error(self):
+        m = _load_module()
+        item = {
+            "source_name": "src",
+            "target_name": "src-target",
+            "target_created": True,
+            "restore_job_id": None,
+            "status": "creating",
+            "message": "",
+            "retries_remaining": 0,
+        }
+        with patch.object(m, "delete_cluster", return_value=True):
+            m.recover_timed_out([item], "timeout", 0, "proj", None, {})
+        assert item["status"] == "error"
+        assert "out of retries" in item["message"]
+
+    def test_delete_failure_still_advances(self):
+        """If the DELETE itself fails, we still proceed (log error but don't
+        hang). The item still gets retried or errored based on budget."""
+        m = _load_module()
+        item = {
+            "source_name": "src",
+            "target_name": "src-target",
+            "target_created": True,
+            "restore_job_id": None,
+            "status": "creating",
+            "message": "",
+            "retries_remaining": 0,
+        }
+        with patch.object(m, "delete_cluster", return_value=False):
+            m.recover_timed_out([item], "timeout", 0, "proj", None, {})
+        assert item["status"] == "error"
+
+
+class TestRunTimeoutRecovery:
+    """Integration tests: a target times out, gets deleted, and the pipeline
+    retries from the create phase.
+
+    These mock the phase-helper functions directly so we can simulate a
+    timeout on the first attempt and success on the second without racing
+    the real-time deadline. The phase helpers themselves are unit-tested
+    separately.
+    """
+
+    def _setup_run(self, m, clusters, snapshot):
+        """Arrange the initial API calls that Phase 1-2 make (listing clusters
+        and the latest snapshot)."""
+        mock_req = MagicMock()
+        mock_req.side_effect = [
+            _mock_resp(200, _paginated(clusters)),
+            _mock_resp(200, _paginated([snapshot])),
+        ]
+        return mock_req
+
+    def test_idle_timeout_retries_and_succeeds(self):
+        m = _load_module()
+        clusters = [_cluster("ClusterA", backup_enabled=True)]
+        snapshot = {"id": "snap-1"}
+
+        # On attempt 1, pretend the waiter timed out (returns the item).
+        # On attempt 2, the waiter sets the item to ready_for_restore.
+        def first_timeout_then_success(items, *a, **kw):
+            creating = [i for i in items if i["status"] == "creating"]
+            if first_timeout_then_success.calls == 0:
+                first_timeout_then_success.calls += 1
+                return creating  # timed out
+            for i in creating:
+                i["status"] = "ready_for_restore"
+            return []
+        first_timeout_then_success.calls = 0
+
+        def restores_succeed(items, *a, **kw):
+            for i in items:
+                if i["status"] == "restoring":
+                    i["status"] = "success"
+                    i["message"] = "ok"
+            return []
+
+        with patch("requests.request") as mock_req:
+            mock_req.side_effect = [
+                _mock_resp(200, _paginated(clusters)),
+                _mock_resp(200, _paginated([snapshot])),
+            ]
+            with patch.object(m, "create_targets", side_effect=lambda items, *a, **kw: [
+                i.__setitem__("target_created", True) or i.__setitem__("status", "creating")
+                for i in items if i["status"] == "pending_create"
+            ]):
+                with patch.object(m, "wait_for_targets_idle", side_effect=first_timeout_then_success):
+                    with patch.object(m, "delete_cluster", return_value=True):
+                        with patch.object(m, "start_restores", side_effect=lambda items, *a, **kw: [
+                            i.__setitem__("status", "restoring")
+                            for i in items if i["status"] == "ready_for_restore"
+                        ]):
+                            with patch.object(m, "poll_restores", side_effect=restores_succeed):
+                                rc = m.run("proj", cleanup=False, max_retries=1)
+        assert rc == 0
+        assert first_timeout_then_success.calls == 1  # wait was called 2x (0->1 counter)
+
+    def test_idle_timeout_exhausts_retries_and_errors(self):
+        m = _load_module()
+        clusters = [_cluster("ClusterA", backup_enabled=True)]
+        snapshot = {"id": "snap-1"}
+
+        def always_timeout(items, *a, **kw):
+            return [i for i in items if i["status"] == "creating"]
+
+        with patch("requests.request") as mock_req:
+            mock_req.side_effect = [
+                _mock_resp(200, _paginated(clusters)),
+                _mock_resp(200, _paginated([snapshot])),
+            ]
+            with patch.object(m, "create_targets", side_effect=lambda items, *a, **kw: [
+                i.__setitem__("target_created", True) or i.__setitem__("status", "creating")
+                for i in items if i["status"] == "pending_create"
+            ]):
+                with patch.object(m, "wait_for_targets_idle", side_effect=always_timeout):
+                    with patch.object(m, "delete_cluster", return_value=True) as mock_del:
+                        rc = m.run("proj", cleanup=False, max_retries=1)
+        assert rc == 1
+        # One DELETE per failed attempt (two attempts = two deletes).
+        assert mock_del.call_count == 2
+
+    def test_restore_timeout_triggers_retry(self):
+        m = _load_module()
+        clusters = [_cluster("ClusterA", backup_enabled=True)]
+        snapshot = {"id": "snap-1"}
+
+        def poll_first_timeout_then_success(items, *a, **kw):
+            restoring = [i for i in items if i["status"] == "restoring"]
+            if poll_first_timeout_then_success.calls == 0:
+                poll_first_timeout_then_success.calls += 1
+                return restoring  # timed out
+            for i in restoring:
+                i["status"] = "success"
+                i["message"] = "ok"
+            return []
+        poll_first_timeout_then_success.calls = 0
+
+        with patch("requests.request") as mock_req:
+            mock_req.side_effect = [
+                _mock_resp(200, _paginated(clusters)),
+                _mock_resp(200, _paginated([snapshot])),
+            ]
+            with patch.object(m, "create_targets", side_effect=lambda items, *a, **kw: [
+                i.__setitem__("target_created", True) or i.__setitem__("status", "creating")
+                for i in items if i["status"] == "pending_create"
+            ]):
+                with patch.object(m, "wait_for_targets_idle", side_effect=lambda items, *a, **kw: [
+                    i.__setitem__("status", "ready_for_restore")
+                    for i in items if i["status"] == "creating"
+                ] and []):
+                    with patch.object(m, "start_restores", side_effect=lambda items, *a, **kw: [
+                        i.__setitem__("status", "restoring")
+                        for i in items if i["status"] == "ready_for_restore"
+                    ]):
+                        with patch.object(m, "poll_restores", side_effect=poll_first_timeout_then_success):
+                            with patch.object(m, "delete_cluster", return_value=True):
+                                rc = m.run("proj", cleanup=False, max_retries=1)
+        assert rc == 0
 
 
 class TestMain:
@@ -412,14 +737,21 @@ class TestMain:
             with patch.object(m, "run", return_value=0) as mock_run:
                 rc = m.main()
         assert rc == 0
-        mock_run.assert_called_once_with("p1", False)
+        mock_run.assert_called_once_with("p1", False, m.DEFAULT_MAX_RETRIES)
 
     def test_main_passes_cleanup_flag(self):
         m = _load_module()
         with patch.object(sys, "argv", ["prog", "--project-id", "p1", "--cleanup"]):
             with patch.object(m, "run", return_value=0) as mock_run:
                 m.main()
-        mock_run.assert_called_once_with("p1", True)
+        mock_run.assert_called_once_with("p1", True, m.DEFAULT_MAX_RETRIES)
+
+    def test_main_passes_max_retries(self):
+        m = _load_module()
+        with patch.object(sys, "argv", ["prog", "--project-id", "p1", "--max-retries", "3"]):
+            with patch.object(m, "run", return_value=0) as mock_run:
+                m.main()
+        mock_run.assert_called_once_with("p1", False, 3)
 
     def test_main_keyboard_interrupt(self):
         m = _load_module()
