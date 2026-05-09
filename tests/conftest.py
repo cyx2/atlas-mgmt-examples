@@ -22,6 +22,7 @@ def reset_modules():
         "invite_users_to_organization",
         "pause_all_clusters_in_organization",
         "provision_projects_for_users",
+        "test_snapshot_restore_for_project",
     ]
 
     # Clean up BEFORE the test - remove modules so they get reimported fresh
